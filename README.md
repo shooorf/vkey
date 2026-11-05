@@ -24,7 +24,9 @@ It is designed for pasting text and scripts into machines where clipboard sharin
   * Built-in Wi-Fi network scanner and Captive Portal (`DNSServer`) for configuring home Wi-Fi from any phone or laptop.
   * Accessible on the local network via mDNS at **`http://vkey.local`** or by IP address.
 * **Hardware `BOOT` Button Controls:**
-  * **Short press (`50 ms – 3 s`):** Types the current IP address, AP SSID, and AP WPA2 password directly into the active text field on the BLE-connected computer (`ip <ip> ap vkeyxxxx pass <password>`).
+  * **Short press (`50 ms – 3 s`):** Types human-readable connection instructions directly into the active text field on the BLE-connected computer:
+    * In AP mode: `Please connect to wifi access point vkeyxxxx with password <password>, then navigate to captive portal or manually open http://192.168.4.1`
+    * In home Wi-Fi mode: `Please connect via configured wifi network to http://<dhcp-ip>`
   * **Long press (hold for `3 seconds` after power-on):** Full factory reset — erases all NVS data (Wi-Fi credentials, generated AP password, Jiggler settings, and BLE bonds) and reboots.
 * **Live Memory Diagnostics:**
   * Displays real-time Free Heap RAM and Maximum Contiguous Allocatable Block in the web UI header.
@@ -37,10 +39,11 @@ It is designed for pasting text and scripts into machines where clipboard sharin
 1. Power on the ESP32 board (via USB charger or PC USB port).
 2. On your target computer, open Bluetooth settings, scan for new devices, and pair with **`Ugreen BT`**.
 3. Open any plain text editor (e.g., Notepad) on the target computer, ensure the **US English** keyboard layout is active, and place the cursor in the editor.
-4. **Short-press the physical `BOOT` button** on the ESP32 board. It will type out a single line containing its current IP, Access Point name, and generated WPA2 password:
+4. **Short-press the physical `BOOT` button** on the ESP32 board. In Access Point mode, it will type out:
    ```text
-   ip 192.168.4.1 ap vkeya1b2 pass k9m4x7p2q8n3
+   Please connect to wifi access point vkeya1b2 with password k9m4x7p2q8n3, then navigate to captive portal or manually open http://192.168.4.1
    ```
+   *(When already connected to your home Wi-Fi, a short press on `BOOT` will instead type: `Please connect via configured wifi network to http://192.168.1.xxx`)*
 5. Connect your phone or PC to the Wi-Fi network **`vkeya1b2`** using the printed password.
 6. A Captive Portal window will open automatically (or navigate to **`http://192.168.4.1`** in your browser).
 7. Under **Wi-Fi Settings**, select your home Wi-Fi network from the scanned dropdown (or type the SSID manually), enter your Wi-Fi password, and click **Save Wi-Fi & Reboot**.

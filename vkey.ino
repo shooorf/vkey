@@ -29,12 +29,15 @@ Libraries:
 Usage:
 * On first boot (or after an NVS reset), the board generates a random 12-character Access Point password (lowercase letters and digits, excluding ambiguous characters) and stores it in NVS.
 * If no home Wi-Fi network is configured or the saved network is unreachable, the board starts a WPA2 Access Point named "vkeyxxxx" (where xxxx are the last 4 hex characters of its MAC address).
-* To get the current IP address and Access Point password: pair the board via Bluetooth ("Ugreen BT") with the target computer, focus any text input field (e.g., Notepad), and short-press the BOOT button on the board — it will type out:
-  ip 192.168.4.1 ap vkeya1b2 pass xxxxxxxxxxxx
+* To get the current IP address and Access Point password: pair the board via Bluetooth ("Ugreen BT") with the target computer, focus any text input field (e.g., Notepad), and short-press the BOOT button on the board:
+  - In AP setup mode, it will type:
+    Please connect to wifi access point vkeya1b2 with password xxxxxxxxxxxx, then navigate to captive portal or manually open http://192.168.4.1
+  - When connected to a configured home Wi-Fi network, it will type:
+    Please connect via configured wifi network to http://192.168.1.xxx
 * Connect to the "vkeyxxxx" Wi-Fi network from a phone or PC using that password — a Captive Portal will open (or navigate to http://192.168.4.1), select your home Wi-Fi network, enter the password, and click Save Wi-Fi & Reboot.
 * Once connected to your home Wi-Fi, the web interface is accessible at http://vkey.local or via the board's IP address (shown in your router's DHCP leases as vkeyxxxx).
 * Onboard BOOT button (GPIO 9):
-  - Short press — types the current IP address, AP SSID, and AP password via BLE keyboard.
+  - Short press — types connection instructions (AP SSID/password/URL in AP mode, or the DHCP IP URL when connected to home Wi-Fi) via BLE keyboard.
   - Long press (hold for 3 seconds after power-on) — erases all NVS settings (Wi-Fi credentials, AP password, Jiggler settings, BLE bonds) and reboots.
     (Note: Do not hold BOOT while plugging in USB power, as GPIO 9 is the ESP32-C3 hardware bootloader strapping pin.)
 * Properly supports RDP sessions.
@@ -346,9 +349,17 @@ void handleBootButton() {
       unsigned long heldMs = now - bootBtnPressTime;
       bootBtnPressed = false;
       if (heldMs >= 50 && heldMs < BOOT_LONG_PRESS_MS) {
-        // Short press on BOOT button — type current IP address, AP SSID, and AP password
-        String ipStr = apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
-        String infoStr = "ip " + ipStr + " ap " + myHostname + " pass " + apPass;
+        // Short press on BOOT button — type human-readable connection instructions
+        String infoStr;
+        if (apMode) {
+          infoStr = "Please connect to wifi access point " + myHostname +
+                    " with password " + apPass +
+                    ", then navigate to captive portal or manually open http://" +
+                    WiFi.softAPIP().toString();
+        } else {
+          infoStr = "Please connect via configured wifi network to http://" +
+                    WiFi.localIP().toString();
+        }
         Serial.print("BOOT short press -> typing: ");
         Serial.println(infoStr);
         startPrintText(infoStr);
