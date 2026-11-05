@@ -31,10 +31,10 @@ Usage:
 * If no home Wi-Fi network is configured or the saved network is unreachable, the board starts a WPA2 Access Point named "vkeyxxxx" (where xxxx are the last 4 hex characters of its MAC address).
 * To get the current IP address and Access Point password: pair the board via Bluetooth ("Ugreen BT") with the target computer, focus any text input field (e.g., Notepad), and short-press the BOOT button on the board:
   - In AP setup mode, it will type:
-    Please connect to wifi access point vkeya1b2 with password xxxxxxxxxxxx, then navigate to captive portal or manually open http://192.168.4.1
+    Please connect to wifi access point vkeya1b2 with password xxxxxxxxxxxx, then navigate to captive portal or manually open http://192.168.4.1/wifi
   - When connected to a configured home Wi-Fi network, it will type:
     Please connect via configured wifi network to http://192.168.1.xxx
-* Connect to the "vkeyxxxx" Wi-Fi network from a phone or PC using that password — a Captive Portal will open (or navigate to http://192.168.4.1), select your home Wi-Fi network, enter the password, and click Save Wi-Fi & Reboot.
+* Connect to the "vkeyxxxx" Wi-Fi network from a phone or PC using that password — a Captive Portal will open (or navigate to http://192.168.4.1/wifi), select your home Wi-Fi network, enter the password, and click Save Wi-Fi & Reboot.
 * Once connected to your home Wi-Fi, the web interface is accessible at http://vkey.local or via the board's IP address (shown in your router's DHCP leases as vkeyxxxx).
 * Onboard BOOT button (GPIO 9):
   - Short press — types connection instructions (AP SSID/password/URL in AP mode, or the DHCP IP URL when connected to home Wi-Fi) via BLE keyboard.
@@ -81,7 +81,9 @@ String apPass = "";
 String savedSsid = "";
 String savedPass = "";
 String cachedScanJson = "[]";
+bool scanCacheValid = false;
 bool apMode = false;
+bool lastBleConnected = false;
 
 // BOOT button state
 bool bootBtnPressed = false;
@@ -155,17 +157,18 @@ const char htmlPage[] PROGMEM = R"=====(
   textarea { width: 100%; padding: 10px; box-sizing: border-box; }
   input[type="text"], input[type="password"], select { width: 100%; padding: 8px; box-sizing: border-box; margin-top: 4px; margin-bottom: 10px; }
   .btn { padding: 12px 24px; font-size: 16px; font-weight: bold; cursor: pointer; margin-right: 10px; margin-bottom: 10px; }
-  .btn-sm { padding: 8px 16px; font-size: 14px; cursor: pointer; margin-bottom: 10px; }
   #status { font-weight: bold; color: #333; margin-top: 10px; margin-bottom: 10px; }
-  #netInfo { font-size: 14px; color: #555; margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 6px; }
+  #netInfo { font-size: 14px; color: #555; margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 6px; line-height: 1.6; }
   .ap-banner { background: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 12px; border-radius: 6px; margin-bottom: 15px; display: none; }
+  .nav-link { font-weight: bold; color: #0056b3; text-decoration: none; }
+  .nav-link:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
   <h2>ESP32 BLE KeyBoard</h2>
   <div id="apBanner" class="ap-banner">
     <strong>Wi-Fi Setup Mode (Access Point)</strong><br>
-    Select your home Wi-Fi network in the Wi-Fi Settings section below to connect the device to your router.
+    The device is not connected to a home router. <a href="/wifi" class="nav-link">Open Wi-Fi &amp; Network Settings &rarr;</a>
   </div>
   <div id="netInfo">Loading device info...</div>
   <div id="status">Status: Ready</div>
@@ -179,10 +182,10 @@ const char htmlPage[] PROGMEM = R"=====(
   <br><hr><br>
   <h3>Keyboard Settings</h3>
   <form id="keyboardForm">
-    Min Key Press Hold (ms): <input type="number" name="kb_prs_min" id="set_kb_prs_min" min="1" style="width:60px;">
-    Max Key Press Hold (ms): <input type="number" name="kb_prs_max" id="set_kb_prs_max" min="1" style="width:60px;"><br><br>
-    Min Delay Between Keys (ms): <input type="number" name="kb_dly_min" id="set_kb_dly_min" min="1" style="width:60px;">
-    Max Delay Between Keys (ms): <input type="number" name="kb_dly_max" id="set_kb_dly_max" min="1" style="width:60px;"><br><br>
+    Min Key Press Hold (ms): <input type="number" name="kb_prs_min" id="set_kb_prs_min" min="1" required style="width:60px;">
+    Max Key Press Hold (ms): <input type="number" name="kb_prs_max" id="set_kb_prs_max" min="1" required style="width:60px;"><br><br>
+    Min Delay Between Keys (ms): <input type="number" name="kb_dly_min" id="set_kb_dly_min" min="1" required style="width:60px;">
+    Max Delay Between Keys (ms): <input type="number" name="kb_dly_max" id="set_kb_dly_max" min="1" required style="width:60px;"><br><br>
     <button type="submit" class="btn">Save Keyboard Settings</button>
   </form>
 
@@ -190,12 +193,12 @@ const char htmlPage[] PROGMEM = R"=====(
   <h3>Jiggler Settings</h3>
   <form id="settingsForm">
     <label><input type="checkbox" name="enabled" id="set_enabled"> Enable Jiggler</label><br><br>
-    Min Interval (sec): <input type="number" name="int_min" id="set_int_min" style="width:60px;">
-    Max Interval (sec): <input type="number" name="int_max" id="set_int_max" style="width:60px;"><br><br>
-    Min Shift (px): <input type="number" name="shift_min" id="set_shift_min" style="width:60px;">
-    Max Shift (px): <input type="number" name="shift_max" id="set_shift_max" style="width:60px;"><br><br>
-    Min Return (ms): <input type="number" name="ret_min" id="set_ret_min" style="width:60px;">
-    Max Return (ms): <input type="number" name="ret_max" id="set_ret_max" style="width:60px;"><br><br>
+    Min Interval (sec): <input type="number" name="int_min" id="set_int_min" min="1" required style="width:60px;">
+    Max Interval (sec): <input type="number" name="int_max" id="set_int_max" min="1" required style="width:60px;"><br><br>
+    Min Shift (px): <input type="number" name="shift_min" id="set_shift_min" min="1" max="127" required style="width:60px;">
+    Max Shift (px): <input type="number" name="shift_max" id="set_shift_max" min="1" max="127" required style="width:60px;"><br><br>
+    Min Return (ms): <input type="number" name="ret_min" id="set_ret_min" min="1" required style="width:60px;">
+    Max Return (ms): <input type="number" name="ret_max" id="set_ret_max" min="1" required style="width:60px;"><br><br>
     <button type="submit" class="btn">Save Jiggler Settings</button>
   </form>
 
@@ -203,31 +206,17 @@ const char htmlPage[] PROGMEM = R"=====(
   <h3>Scroller Settings</h3>
   <form id="scrollerForm">
     <label><input type="checkbox" name="sc_enabled" id="set_sc_enabled"> Enable Random Scroller</label><br><br>
-    Min Interval (sec): <input type="number" name="sc_int_min" id="set_sc_int_min" style="width:60px;">
-    Max Interval (sec): <input type="number" name="sc_int_max" id="set_sc_int_max" style="width:60px;"><br><br>
-    Min Burst Steps: <input type="number" name="sc_cnt_min" id="set_sc_cnt_min" style="width:60px;">
-    Max Burst Steps: <input type="number" name="sc_cnt_max" id="set_sc_cnt_max" style="width:60px;"><br><br>
-    Min Step Delay (ms): <input type="number" name="sc_dly_min" id="set_sc_dly_min" style="width:60px;">
-    Max Step Delay (ms): <input type="number" name="sc_dly_max" id="set_sc_dly_max" style="width:60px;"><br><br>
-    Min Step (ticks, 1 &approx; 100px): <input type="number" name="sc_stp_min" id="set_sc_stp_min" min="1" max="127" style="width:60px;">
-    Max Step (ticks): <input type="number" name="sc_stp_max" id="set_sc_stp_max" min="1" max="127" style="width:60px;"><br><br>
-    Min Return Delay (sec): <input type="number" name="sc_ret_min" id="set_sc_ret_min" style="width:60px;">
-    Max Return Delay (sec): <input type="number" name="sc_ret_max" id="set_sc_ret_max" style="width:60px;"><br><br>
+    Min Interval (sec): <input type="number" name="sc_int_min" id="set_sc_int_min" min="1" required style="width:60px;">
+    Max Interval (sec): <input type="number" name="sc_int_max" id="set_sc_int_max" min="1" required style="width:60px;"><br><br>
+    Min Burst Steps: <input type="number" name="sc_cnt_min" id="set_sc_cnt_min" min="1" required style="width:60px;">
+    Max Burst Steps: <input type="number" name="sc_cnt_max" id="set_sc_cnt_max" min="1" required style="width:60px;"><br><br>
+    Min Step Delay (ms): <input type="number" name="sc_dly_min" id="set_sc_dly_min" min="10" required style="width:60px;">
+    Max Step Delay (ms): <input type="number" name="sc_dly_max" id="set_sc_dly_max" min="10" required style="width:60px;"><br><br>
+    Min Step (ticks, 1 &approx; 100px): <input type="number" name="sc_stp_min" id="set_sc_stp_min" min="1" max="127" required style="width:60px;">
+    Max Step (ticks): <input type="number" name="sc_stp_max" id="set_sc_stp_max" min="1" max="127" required style="width:60px;"><br><br>
+    Min Return Delay (sec): <input type="number" name="sc_ret_min" id="set_sc_ret_min" min="1" required style="width:60px;">
+    Max Return Delay (sec): <input type="number" name="sc_ret_max" id="set_sc_ret_max" min="1" required style="width:60px;"><br><br>
     <button type="submit" class="btn">Save Scroller Settings</button>
-  </form>
-
-  <br><hr><br>
-  <h3>Wi-Fi Settings</h3>
-  <form id="wifiForm">
-    <button type="button" id="scanBtn" class="btn-sm" onclick="scanWifi(true)">Scan Wi-Fi Networks</button>
-    <select id="ssidSelect" style="display:none;" onchange="if(this.value) document.getElementById('wifi_ssid').value=this.value;">
-      <option value="">-- Select scanned network --</option>
-    </select>
-    <label>SSID (Network Name):</label>
-    <input type="text" name="ssid" id="wifi_ssid" placeholder="Enter Wi-Fi SSID" required>
-    <label>Password:</label>
-    <input type="password" name="pass" id="wifi_pass" placeholder="Enter Wi-Fi password (leave empty if open)">
-    <button type="submit" class="btn">Save Wi-Fi &amp; Reboot</button>
   </form>
 
   <br><hr><br>
@@ -238,7 +227,6 @@ const char htmlPage[] PROGMEM = R"=====(
     const printBtn = document.getElementById('printBtn');
     const netInfoDiv = document.getElementById('netInfo');
     const apBanner = document.getElementById('apBanner');
-    let initialLoadDone = false;
 
     function escHtml(s) {
       return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -258,45 +246,20 @@ const char htmlPage[] PROGMEM = R"=====(
           printBtn.disabled = false;
         }
 
-        apBanner.style.display = data.ap_mode ? 'block' : 'none';
-        let modeText = data.ap_mode ? `AP Mode (${escHtml(data.hostname)})` : `Connected to "${escHtml(data.ssid)}"`;
+        if (data.ap_mode) {
+          apBanner.style.display = 'block';
+          if (data.ssid) {
+            apBanner.innerHTML = `<strong>Wi-Fi Fallback Mode (Access Point)</strong><br>Failed to connect to saved network <b>"${escHtml(data.ssid)}"</b>. <a href="/wifi" class="nav-link">Open Wi-Fi &amp; Network Settings &rarr;</a>`;
+          } else {
+            apBanner.innerHTML = `<strong>Wi-Fi Setup Mode (Access Point)</strong><br>The device is not connected to a home router. <a href="/wifi" class="nav-link">Open Wi-Fi &amp; Network Settings &rarr;</a>`;
+          }
+        } else {
+          apBanner.style.display = 'none';
+        }
         let freeKb = (data.free_heap / 1024).toFixed(1);
         let maxBlockKb = (data.max_alloc / 1024).toFixed(1);
-        netInfoDiv.innerHTML = `Host/AP: <b>${escHtml(data.hostname)}</b> | AP Pass: <b>${escHtml(data.ap_pass)}</b> | mDNS: <b>http://vkey.local</b> | IP: <b>${escHtml(data.ip)}</b> | Wi-Fi: <b>${modeText}</b><br>Free RAM: <b>${freeKb} KB</b> (Max contiguous block: <b>${maxBlockKb} KB</b>)`;
-
-        if (!initialLoadDone) {
-          initialLoadDone = true;
-          if (data.ssid) {
-            document.getElementById('wifi_ssid').value = data.ssid;
-          }
-          if (data.ap_mode && !data.printing) {
-            scanWifi(false);
-          }
-        }
+        netInfoDiv.innerHTML = `Free RAM: <b>${freeKb} KB</b> (Max contiguous block: <b>${maxBlockKb} KB</b>) &nbsp;|&nbsp; <a href="/wifi" class="nav-link">Wi-Fi &amp; Network Settings &rarr;</a>`;
       }).catch(() => {});
-    }
-
-    function scanWifi(refresh) {
-      const scanBtn = document.getElementById('scanBtn');
-      const select = document.getElementById('ssidSelect');
-      scanBtn.disabled = true;
-      scanBtn.textContent = 'Scanning...';
-      const url = refresh ? '/scan?refresh=1' : '/scan';
-      fetch(url).then(r => r.json()).then(list => {
-        select.innerHTML = '<option value="">-- Select scanned network --</option>';
-        list.forEach(item => {
-          const opt = document.createElement('option');
-          opt.value = item.ssid;
-          opt.textContent = `${item.ssid} (${item.rssi} dBm)${item.secure ? ' 🔒' : ''}`;
-          select.appendChild(opt);
-        });
-        select.style.display = 'block';
-        scanBtn.disabled = false;
-        scanBtn.textContent = 'Scan Wi-Fi Networks';
-      }).catch(() => {
-        scanBtn.disabled = false;
-        scanBtn.textContent = 'Scan Wi-Fi Networks';
-      });
     }
 
     document.getElementById('typeForm').onsubmit = function(e) {
@@ -344,7 +307,7 @@ const char htmlPage[] PROGMEM = R"=====(
       e.preventDefault();
       let data = new URLSearchParams(new FormData(e.target));
       fetch('/keyboard', { method: 'POST', body: data })
-        .then(() => alert('Keyboard settings saved!'));
+        .then(() => { loadSettings(); alert('Keyboard settings saved!'); });
     };
 
     document.getElementById('settingsForm').onsubmit = function(e) {
@@ -354,7 +317,7 @@ const char htmlPage[] PROGMEM = R"=====(
       else data.set('enabled', 'true');
 
       fetch('/settings', { method: 'POST', body: data })
-        .then(() => alert('Jiggler settings saved!'));
+        .then(() => { loadSettings(); alert('Jiggler settings saved!'); });
     };
 
     document.getElementById('scrollerForm').onsubmit = function(e) {
@@ -364,8 +327,146 @@ const char htmlPage[] PROGMEM = R"=====(
       else data.set('sc_enabled', 'true');
 
       fetch('/scroller', { method: 'POST', body: data })
-        .then(() => alert('Scroller settings saved!'));
+        .then(() => { loadSettings(); alert('Scroller settings saved!'); });
     };
+
+    loadSettings();
+    setInterval(updateStatus, 1000); // Poll status every second
+    updateStatus();
+  </script>
+</body></html>
+)=====";
+
+const char wifiPage[] PROGMEM = R"=====(
+<!DOCTYPE html><html><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wi-Fi &amp; Network Settings - ESP32 BLE KeyBoard</title>
+<style>
+  body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: auto; color: #222; }
+  input[type="text"], input[type="password"], select { width: 100%; padding: 8px; box-sizing: border-box; margin-top: 4px; margin-bottom: 12px; }
+  .btn { padding: 12px 24px; font-size: 16px; font-weight: bold; cursor: pointer; margin-right: 10px; margin-bottom: 10px; }
+  .btn-sm { padding: 8px 16px; font-size: 14px; cursor: pointer; margin-bottom: 10px; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin-bottom: 20px; background: #fafafa; }
+  .card h3 { margin-top: 0; margin-bottom: 8px; }
+  .card-desc { font-size: 13px; color: #666; margin-top: 0; margin-bottom: 12px; }
+  .info-row { margin-bottom: 8px; font-size: 14px; }
+  .info-label { color: #555; display: inline-block; min-width: 190px; }
+  .badge-ap { display: inline-block; padding: 4px 10px; border-radius: 4px; background: #fff3cd; border: 1px solid #ffeeba; color: #856404; font-weight: bold; }
+  .badge-sta { display: inline-block; padding: 4px 10px; border-radius: 4px; background: #d4edda; border: 1px solid #c3e6cb; color: #155724; font-weight: bold; }
+  .badge-err { display: inline-block; padding: 4px 10px; border-radius: 4px; background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; font-weight: bold; }
+  .nav-link { font-weight: bold; color: #0056b3; text-decoration: none; display: inline-block; margin-bottom: 15px; }
+  .nav-link:hover { text-decoration: underline; }
+  code { background: #eee; padding: 2px 6px; border-radius: 4px; font-size: 14px; }
+</style>
+</head>
+<body>
+  <a href="/" class="nav-link">&larr; Back to Main Page (Keyboard &amp; Mouse)</a>
+  <h2>Wi-Fi &amp; Network Settings</h2>
+
+  <div class="card">
+    <h3>1. Current Network Status</h3>
+    <p class="card-desc">Shows how the ESP32 is currently connected and reachable right now.</p>
+    <div class="info-row"><span class="info-label">Current Operating Mode:</span> <span id="curMode">Loading...</span></div>
+    <div class="info-row"><span class="info-label">Active Network (SSID):</span> <b id="curNetwork">-</b></div>
+    <div class="info-row"><span class="info-label">Current IP Address:</span> <code id="curIp">-</code></div>
+    <div class="info-row"><span class="info-label">mDNS Address:</span> <code>http://vkey.local</code></div>
+    <div class="info-row"><span class="info-label">Device Hostname:</span> <code id="curHostname">-</code></div>
+  </div>
+
+  <div class="card">
+    <h3>2. Connect to Home Wi-Fi Router (Client Mode)</h3>
+    <p class="card-desc">Select your external Wi-Fi router below so the ESP32 connects to your local network on boot.</p>
+    <div class="info-row"><span class="info-label">Saved Home Wi-Fi SSID:</span> <b id="savedSsidText">-</b></div>
+    <div class="info-row"><span class="info-label">Home Wi-Fi Status:</span> <span id="homeWifiStatus">-</span></div>
+    <hr style="border:0; border-top:1px solid #ddd; margin: 12px 0;">
+    <form id="wifiForm">
+      <button type="button" id="scanBtn" class="btn-sm" onclick="scanWifi(true)">Rescan Wi-Fi Networks</button>
+      <label for="ssidSelect">Available Wi-Fi Networks:</label>
+      <select id="ssidSelect" onchange="if(this.value) document.getElementById('wifi_ssid').value=this.value;">
+        <option value="">-- Scanning networks... --</option>
+      </select>
+      <label for="wifi_ssid">Home Wi-Fi SSID (Network Name):</label>
+      <input type="text" name="ssid" id="wifi_ssid" placeholder="Enter your home Wi-Fi SSID" autocorrect="off" autocapitalize="none" spellcheck="false" required>
+      <label for="wifi_pass">Home Wi-Fi Password:</label>
+      <input type="password" name="pass" id="wifi_pass" placeholder="Enter your home Wi-Fi password (leave empty if open)" autocorrect="off" autocapitalize="none" spellcheck="false">
+      <button type="submit" class="btn">Save Wi-Fi &amp; Reboot</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>3. ESP32 Built-in Access Point (Fallback Hotspot)</h3>
+    <p class="card-desc">These are the credentials of the ESP32's own built-in Wi-Fi hotspot. It turns on automatically only when no home Wi-Fi is configured or when your home router is unreachable.</p>
+    <div class="info-row"><span class="info-label">Built-in Hotspot State:</span> <b id="apState">-</b></div>
+    <div class="info-row"><span class="info-label">ESP32 AP Name (SSID):</span> <code id="apSsid">-</code></div>
+    <div class="info-row"><span class="info-label">ESP32 AP Password (WPA2):</span> <code id="apPass">-</code></div>
+    <div class="info-row"><span class="info-label">ESP32 AP Default IP:</span> <code>http://192.168.4.1</code></div>
+  </div>
+
+  <a href="/" class="nav-link">&larr; Back to Main Page (Keyboard &amp; Mouse)</a>
+
+  <script>
+    function loadNetworkInfo() {
+      fetch('/status').then(r => r.json()).then(data => {
+        const curMode = document.getElementById('curMode');
+        const curNetwork = document.getElementById('curNetwork');
+        const apState = document.getElementById('apState');
+        const homeWifiStatus = document.getElementById('homeWifiStatus');
+
+        if (data.ap_mode) {
+          curNetwork.textContent = data.hostname + ' (ESP32 Built-in Hotspot)';
+          if (data.ssid) {
+            curMode.innerHTML = '<span class="badge-ap">ESP32 Access Point (Fallback Mode)</span>';
+            homeWifiStatus.innerHTML = '<span class="badge-err">Failed to connect (network unreachable or wrong password)</span>';
+            apState.textContent = 'Active now (fallback because Home Wi-Fi connection failed)';
+          } else {
+            curMode.innerHTML = '<span class="badge-ap">ESP32 Access Point (Initial Setup Mode)</span>';
+            homeWifiStatus.textContent = 'Not configured yet';
+            apState.textContent = 'Active now (waiting for Home Wi-Fi setup)';
+          }
+        } else {
+          curMode.innerHTML = '<span class="badge-sta">Connected to Home Wi-Fi (Client Mode)</span>';
+          curNetwork.textContent = data.ssid;
+          homeWifiStatus.innerHTML = '<span class="badge-sta">Connected</span>';
+          apState.textContent = 'Standby (inactive while connected to Home Wi-Fi)';
+        }
+
+        document.getElementById('curIp').textContent = 'http://' + data.ip;
+        document.getElementById('curHostname').textContent = data.hostname;
+        document.getElementById('savedSsidText').textContent = data.ssid ? data.ssid : 'Not configured';
+        document.getElementById('apSsid').textContent = data.hostname;
+        document.getElementById('apPass').textContent = data.ap_pass;
+
+        if (data.ssid) {
+          document.getElementById('wifi_ssid').value = data.ssid;
+        }
+      }).catch(() => {});
+    }
+
+    function scanWifi(refresh) {
+      const scanBtn = document.getElementById('scanBtn');
+      const select = document.getElementById('ssidSelect');
+      scanBtn.disabled = true;
+      scanBtn.textContent = 'Scanning...';
+      if (refresh) {
+        select.innerHTML = '<option value="">-- Scanning networks... --</option>';
+      }
+      const url = refresh ? '/scan?refresh=1' : '/scan';
+      fetch(url).then(r => r.json()).then(list => {
+        select.innerHTML = '<option value="">-- Select a scanned Wi-Fi network --</option>';
+        list.forEach(item => {
+          const opt = document.createElement('option');
+          opt.value = item.ssid;
+          opt.textContent = `${item.ssid} (${item.rssi} dBm)${item.secure ? ' 🔒' : ''}`;
+          select.appendChild(opt);
+        });
+        scanBtn.disabled = false;
+        scanBtn.textContent = 'Rescan Wi-Fi Networks';
+      }).catch(() => {
+        select.innerHTML = '<option value="">-- Scan failed, enter SSID manually --</option>';
+        scanBtn.disabled = false;
+        scanBtn.textContent = 'Rescan Wi-Fi Networks';
+      });
+    }
 
     document.getElementById('wifiForm').onsubmit = function(e) {
       e.preventDefault();
@@ -375,9 +476,8 @@ const char htmlPage[] PROGMEM = R"=====(
         .then(msg => alert(msg));
     };
 
-    loadSettings();
-    setInterval(updateStatus, 1000); // Poll status every second
-    updateStatus();
+    loadNetworkInfo();
+    scanWifi(false);
   </script>
 </body></html>
 )=====";
@@ -414,6 +514,13 @@ String jsonEscape(const String& s) {
 }
 
 void eraseAllAndReboot() {
+  if (bleDevice.isConnected()) {
+    if (capsLockActive) {
+      delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+      toggleCapsLock(true);
+    }
+    Keyboard.releaseAll();
+  }
   Serial.println("\nErasing NVS and rebooting...");
   delay(200);
   nvs_flash_erase();
@@ -458,7 +565,11 @@ bool shouldEnableCapsLock(const String& text, int curIdx) {
     }
   }
 
-  nextCapsCheckIndex = (endIdx >= (int)text.length()) ? (int)text.length() : (curIdx + 1);
+  // Since text[curIdx] is uppercase and leaves the window on the next step, at least
+  // (CAPS_MIN_UPPER_RUN + 1 - upperCount) new characters must enter the window to reach 5.
+  nextCapsCheckIndex = (endIdx >= (int)text.length())
+                         ? (int)text.length()
+                         : (curIdx + max(1, CAPS_MIN_UPPER_RUN + 1 - upperCount));
   return false;
 }
 
@@ -494,7 +605,7 @@ void startPrintText(const String& text) {
   Serial.print("Keys: ");
 }
 
-void handleBootButton() {
+void handleBootButton(bool allowShortPress = true) {
   bool isLow = (digitalRead(BOOT_BUTTON_PIN) == LOW);
   unsigned long now = millis();
 
@@ -504,26 +615,42 @@ void handleBootButton() {
       bootBtnPressTime = now;
     } else if (now - bootBtnPressTime >= BOOT_LONG_PRESS_MS) {
       // Long press on BOOT button — full NVS reset and reboot
+      Serial.println("\nBOOT long press (3s) -> full NVS reset");
       eraseAllAndReboot();
     }
   } else {
     if (bootBtnPressed) {
       unsigned long heldMs = now - bootBtnPressTime;
       bootBtnPressed = false;
-      if (heldMs >= 50 && heldMs < BOOT_LONG_PRESS_MS) {
+      if (heldMs >= BOOT_LONG_PRESS_MS) {
+        // Long press released after a blocking operation
+        Serial.println("\nBOOT long press (3s) -> full NVS reset");
+        eraseAllAndReboot();
+      } else if (heldMs >= 50) {
         // Short press on BOOT button — type human-readable connection instructions
-        String infoStr;
-        if (apMode) {
-          infoStr = "Please connect to wifi access point " + myHostname +
-                    " with password " + apPass +
-                    ", then navigate to captive portal or manually open http://" +
-                    WiFi.softAPIP().toString();
+        if (!allowShortPress) {
+          Serial.println("\nBOOT short press -> ignored (Wi-Fi connecting, IP not ready yet)");
+        } else if (!bleDevice.isConnected()) {
+          Serial.println("BOOT short press -> ignored (BLE not connected)");
+        } else if (isPrinting) {
+          Serial.println("\nBOOT short press -> ignored (already printing)");
         } else {
-          infoStr = "Please connect via configured wifi network to http://" +
-                    WiFi.localIP().toString();
+          String infoStr;
+          if (apMode) {
+            infoStr = "Please connect to wifi access point " + myHostname +
+                      " with password " + apPass +
+                      ", then navigate to captive portal or manually open http://" +
+                      WiFi.softAPIP().toString() + "/wifi";
+          } else if (WiFi.status() == WL_CONNECTED) {
+            infoStr = "Please connect via configured wifi network to http://" +
+                      WiFi.localIP().toString();
+          } else {
+            infoStr = "Wi-Fi network " + savedSsid +
+                      " is currently disconnected (reconnecting). Check router or reboot device to start Access Point";
+          }
+          Serial.println("BOOT short press -> typing connection info");
+          startPrintText(infoStr);
         }
-        Serial.println("BOOT short press -> typing connection info");
-        startPrintText(infoStr);
       }
     }
   }
@@ -532,6 +659,10 @@ void handleBootButton() {
 void performWifiScan() {
   Serial.println("Scanning Wi-Fi networks...");
   int n = WiFi.scanNetworks();
+  if (n < 0) {
+    delay(200);
+    n = WiFi.scanNetworks();
+  }
   String json = "[";
   for (int i = 0; i < n; i++) {
     if (i > 0) json += ",";
@@ -544,13 +675,15 @@ void performWifiScan() {
   json += "]";
   WiFi.scanDelete();
   cachedScanJson = json;
-  Serial.printf("Wi-Fi scan complete: %d networks found\n", n);
+  scanCacheValid = true;
+  Serial.printf("Wi-Fi scan complete: %d networks found\n", max(0, n));
 }
 
 void startAccessPointMode() {
   apMode = true;
   WiFi.setAutoReconnect(false);
-  WiFi.disconnect(true, true);
+  WiFi.disconnect(false, true);
+  delay(100);
 
   // 1. Scan Wi-Fi networks in pure STA mode BEFORE turning on the Access Point
   // so scanning and AP operation never overlap.
@@ -581,7 +714,10 @@ void setup() {
   randomSeed(esp_random());
 
   Serial.begin(115200);
-  delay(1000);
+  for (int i = 0; i < 10; i++) {
+    handleBootButton(false);
+    delay(100);
+  }
   Serial.println("\n--- Run ESP32 BLE Keyboard ---");
 
   myHostname = buildDeviceHostname();
@@ -643,6 +779,7 @@ void setup() {
     WiFi.setHostname(myHostname.c_str());
     WiFi.mode(WIFI_STA);
     WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
+    WiFi.setAutoReconnect(true);
     WiFi.begin(savedSsid.c_str(), savedPass.c_str());
     WiFi.setSleep(false);
 
@@ -650,7 +787,7 @@ void setup() {
     Serial.print(savedSsid);
     unsigned long startAttempt = millis();
     while (WiFi.status() != WL_CONNECTED && (millis() - startAttempt < WIFI_CONNECT_TIMEOUT_MS)) {
-      handleBootButton();
+      handleBootButton(false); // Allow 3s long-press NVS reset while waiting, ignore short press until IP/AP is ready
       delay(100);
       Serial.print(".");
     }
@@ -700,6 +837,7 @@ void setup() {
 
   server.on("/cancel", []() {
     if (capsLockActive && bleDevice.isConnected()) {
+      delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
       toggleCapsLock(true);
     }
     capsLockActive = false;
@@ -728,10 +866,14 @@ void setup() {
   });
 
   server.on("/scan", HTTP_GET, []() {
-    if (server.hasArg("refresh") || cachedScanJson == "[]") {
+    if (server.hasArg("refresh") || !scanCacheValid) {
       performWifiScan();
     }
     server.send(200, "application/json", cachedScanJson);
+  });
+
+  server.on("/wifi", HTTP_GET, []() {
+    server.send_P(200, "text/html", wifiPage);
   });
 
   server.on("/wifi", HTTP_POST, []() {
@@ -745,6 +887,15 @@ void setup() {
     preferences.putString("wifi_ssid", newSsid);
     preferences.putString("wifi_pass", newPass);
 
+    if (bleDevice.isConnected()) {
+      if (capsLockActive) {
+        delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+        toggleCapsLock(true);
+      }
+      Keyboard.releaseAll();
+    }
+
+    Serial.printf("Wi-Fi credentials saved for SSID '%s'. Rebooting...\n", newSsid.c_str());
     server.send(200, "text/plain", "Wi-Fi credentials saved! Rebooting...");
     delay(500);
     ESP.restart();
@@ -783,6 +934,7 @@ void setup() {
     if (server.hasArg("kb_prs_max")) { keyPressMaxMs = max(keyPressMinMs, (int)server.arg("kb_prs_max").toInt()); preferences.putInt("kb_prs_max", keyPressMaxMs); }
     if (server.hasArg("kb_dly_min")) { keyDelayMinMs = max(1, (int)server.arg("kb_dly_min").toInt()); preferences.putInt("kb_dly_min", keyDelayMinMs); }
     if (server.hasArg("kb_dly_max")) { keyDelayMaxMs = max(keyDelayMinMs, (int)server.arg("kb_dly_max").toInt()); preferences.putInt("kb_dly_max", keyDelayMaxMs); }
+    Serial.printf("Keyboard settings saved: press=%d..%dms, delay=%d..%dms\n", keyPressMinMs, keyPressMaxMs, keyDelayMinMs, keyDelayMaxMs);
     server.send(200, "text/plain", "OK");
   });
 
@@ -791,18 +943,21 @@ void setup() {
       jiggleEnabled = (server.arg("enabled") == "true" || server.arg("enabled") == "on");
       preferences.putBool("enabled", jiggleEnabled);
     }
-    if (server.hasArg("int_min")) { jiggleIntervalMinSec = server.arg("int_min").toInt(); preferences.putInt("int_min", jiggleIntervalMinSec); }
-    if (server.hasArg("int_max")) { jiggleIntervalMaxSec = server.arg("int_max").toInt(); preferences.putInt("int_max", jiggleIntervalMaxSec); }
-    if (server.hasArg("shift_min")) { jiggleShiftMinPx = server.arg("shift_min").toInt(); preferences.putInt("shift_min", jiggleShiftMinPx); }
-    if (server.hasArg("shift_max")) { jiggleShiftMaxPx = server.arg("shift_max").toInt(); preferences.putInt("shift_max", jiggleShiftMaxPx); }
-    if (server.hasArg("ret_min")) { jiggleReturnMinMs = server.arg("ret_min").toInt(); preferences.putInt("ret_min", jiggleReturnMinMs); }
-    if (server.hasArg("ret_max")) { jiggleReturnMaxMs = server.arg("ret_max").toInt(); preferences.putInt("ret_max", jiggleReturnMaxMs); }
+    if (server.hasArg("int_min")) { jiggleIntervalMinSec = max(1, (int)server.arg("int_min").toInt()); preferences.putInt("int_min", jiggleIntervalMinSec); }
+    if (server.hasArg("int_max")) { jiggleIntervalMaxSec = max(jiggleIntervalMinSec, (int)server.arg("int_max").toInt()); preferences.putInt("int_max", jiggleIntervalMaxSec); }
+    if (server.hasArg("shift_min")) { jiggleShiftMinPx = constrain((int)server.arg("shift_min").toInt(), 1, 127); preferences.putInt("shift_min", jiggleShiftMinPx); }
+    if (server.hasArg("shift_max")) { jiggleShiftMaxPx = constrain((int)server.arg("shift_max").toInt(), jiggleShiftMinPx, 127); preferences.putInt("shift_max", jiggleShiftMaxPx); }
+    if (server.hasArg("ret_min")) { jiggleReturnMinMs = max(1, (int)server.arg("ret_min").toInt()); preferences.putInt("ret_min", jiggleReturnMinMs); }
+    if (server.hasArg("ret_max")) { jiggleReturnMaxMs = max(jiggleReturnMinMs, (int)server.arg("ret_max").toInt()); preferences.putInt("ret_max", jiggleReturnMaxMs); }
     
-    // Reset jiggler timer
-    jiggleShifted = false;
-    nextJiggleDelay = random(jiggleIntervalMinSec, jiggleIntervalMaxSec + 1) * 1000UL;
-    lastJiggleActionTime = millis();
+    // Reset jiggler idle timer if not currently shifted
+    if (!jiggleShifted) {
+      nextJiggleDelay = random(jiggleIntervalMinSec, jiggleIntervalMaxSec + 1) * 1000UL;
+      lastJiggleActionTime = millis();
+    }
     
+    Serial.printf("Jiggler settings saved: enabled=%d, int=%d..%ds, shift=%d..%dpx, ret=%d..%dms\n",
+                  jiggleEnabled, jiggleIntervalMinSec, jiggleIntervalMaxSec, jiggleShiftMinPx, jiggleShiftMaxPx, jiggleReturnMinMs, jiggleReturnMaxMs);
     server.send(200, "text/plain", "OK");
   });
 
@@ -822,24 +977,28 @@ void setup() {
     if (server.hasArg("sc_ret_min")) { scrollReturnMinSec = max(1, (int)server.arg("sc_ret_min").toInt()); preferences.putInt("sc_ret_min", scrollReturnMinSec); }
     if (server.hasArg("sc_ret_max")) { scrollReturnMaxSec = max(scrollReturnMinSec, (int)server.arg("sc_ret_max").toInt()); preferences.putInt("sc_ret_max", scrollReturnMaxSec); }
 
-    // Reset scroller state machine
+    // Immediately stop any active scroll cycle and reset idle timer
     scrollState = SCROLL_IDLE;
     scrollAccumulatedTicks = 0;
     nextScrollDelay = random(scrollIntervalMinSec, scrollIntervalMaxSec + 1) * 1000UL;
     lastScrollActionTime = millis();
 
+    Serial.printf("Scroller settings saved: enabled=%d, int=%d..%ds, burst=%d..%d, dly=%d..%dms, step=%d..%dticks, ret=%d..%ds\n",
+                  scrollEnabled, scrollIntervalMinSec, scrollIntervalMaxSec, scrollBurstMin, scrollBurstMax,
+                  scrollStepDelayMinMs, scrollStepDelayMaxMs, scrollStepMinTicks, scrollStepMaxTicks, scrollReturnMinSec, scrollReturnMaxSec);
     server.send(200, "text/plain", "OK");
   });
 
   server.on("/reset_nvs", []() {
+    Serial.println("\nWeb UI /reset_nvs -> full NVS reset");
     server.send(200, "text/plain", "NVS Erased. Rebooting...");
     eraseAllAndReboot();
   });
 
-  // Redirect all unknown requests to the root page for Captive Portal support in AP mode
+  // Redirect all unknown requests to the Wi-Fi setup page (/wifi) for Captive Portal support in AP mode
   server.onNotFound([]() {
     if (apMode) {
-      server.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/", true);
+      server.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/wifi", true);
       server.send(302, "text/plain", "");
     } else {
       server.send(404, "text/plain", "Not found");
@@ -857,8 +1016,14 @@ void loop() {
   server.handleClient();
   handleBootButton();
 
+  bool bleConnected = bleDevice.isConnected();
+  if (bleConnected != lastBleConnected) {
+    lastBleConnected = bleConnected;
+    Serial.println(bleConnected ? "\nBLE client connected" : "\nBLE client disconnected");
+  }
+
   // Asynchronous (non-blocking) text typing
-  if (isPrinting && bleDevice.isConnected()) {
+  if (isPrinting && bleConnected) {
     if (millis() - lastCharTime >= currentDelay) {
       int curIdx = printIndex;
       char c = pendingText[printIndex];
@@ -941,8 +1106,23 @@ void loop() {
     Serial.println("\nBLE disconnected, print aborted");
   }
 
+  // Reset jiggler and scroller states/timers when BLE is disconnected
+  if (!bleDevice.isConnected()) {
+    jiggleShifted = false;
+    lastJiggleActionTime = millis();
+    scrollState = SCROLL_IDLE;
+    scrollAccumulatedTicks = 0;
+    lastScrollActionTime = millis();
+  }
+
+  // Keep idle timers fresh while actively typing text so Jiggler/Scroller count their interval from the end of typing
+  if (isPrinting) {
+    if (!jiggleShifted) lastJiggleActionTime = millis();
+    if (scrollState == SCROLL_IDLE) lastScrollActionTime = millis();
+  }
+
   // Non-blocking Mouse Jiggler (paused while actively typing text, except returning a shifted cursor)
-  if (jiggleEnabled && bleDevice.isConnected() && (!isPrinting || jiggleShifted)) {
+  if ((jiggleEnabled || jiggleShifted) && bleDevice.isConnected() && (!isPrinting || jiggleShifted)) {
     unsigned long currentMillis = millis();
     if (currentMillis - lastJiggleActionTime >= nextJiggleDelay) {
       if (!jiggleShifted) {
@@ -960,18 +1140,13 @@ void loop() {
         // Return mouse cursor to original position
         Mouse.move(-currentJiggleX, -currentJiggleY);
         jiggleShifted = false;
+        Serial.printf("Jiggle: (%+d, %+d) px\n", currentJiggleX, currentJiggleY);
         
         // Set interval until next random movement
         nextJiggleDelay = random(jiggleIntervalMinSec, jiggleIntervalMaxSec + 1) * 1000UL;
         lastJiggleActionTime = currentMillis;
       }
     }
-  }
-
-  // Reset scroller state if BLE disconnects mid-cycle
-  if (!bleDevice.isConnected() && scrollState != SCROLL_IDLE) {
-    scrollState = SCROLL_IDLE;
-    scrollAccumulatedTicks = 0;
   }
 
   // Independent Non-blocking Mouse Scroller (paused while actively typing text, except finishing an active cycle)
@@ -986,6 +1161,8 @@ void loop() {
           scrollState = SCROLL_BURST_OUT;
           nextScrollDelay = 0;
           lastScrollActionTime = currentMillis;
+          Serial.printf("Scroll: starting burst (%d steps, dir=%s)\n",
+                        scrollStepsRemaining, scrollDirection > 0 ? "UP" : "DOWN");
           break;
         }
 
@@ -1001,6 +1178,8 @@ void loop() {
           } else {
             scrollState = SCROLL_WAIT_RETURN;
             nextScrollDelay = random(scrollReturnMinSec * 1000UL, scrollReturnMaxSec * 1000UL + 1);
+            Serial.printf("Scroll: burst complete (%d ticks), waiting %lu ms before return\n",
+                          scrollAccumulatedTicks, nextScrollDelay);
           }
           break;
         }
@@ -1026,6 +1205,7 @@ void loop() {
           } else {
             scrollState = SCROLL_IDLE;
             nextScrollDelay = random(scrollIntervalMinSec, scrollIntervalMaxSec + 1) * 1000UL;
+            Serial.println("Scroll: returned to initial position");
           }
           break;
         }

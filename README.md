@@ -16,22 +16,25 @@ It is designed for pasting text and scripts into machines where clipboard sharin
   * Real-time progress bar (`%` and character counter) and instant cancellation (`Cancel`).
 * **Configurable Non-Blocking Mouse Jiggler & Independent Mouse Scroller:**
   * **Mouse Jiggler:** Periodically shifts the mouse cursor by a small random offset (default `2–5 px` every `80–120 s`), waits `20–40 ms`, and returns the cursor to its exact starting position.
-  * **Mouse Scroller (Disabled by default):** Independently simulates realistic human wheel scrolling bursts (default `3–5` steps in one direction with `60–80 ms` between steps, `1–2` wheel ticks ≈ `100–200 px` per step), waits `2–5 s`, and smoothly scrolls back by the exact accumulated amount to return the page to its original position.
+  * **Mouse Scroller (Disabled by default):** Independently simulates realistic human wheel scrolling bursts (default `3–5` steps in one direction with `60–80 ms` between steps, `1–2` wheel ticks ≈ `100–200 px` per step), waits `2–5 s`, and smoothly scrolls back by the exact accumulated amount to return the page to its original position. Disabling the Scroller immediately stops all scrolling operations.
   * Automatically pauses new movements/scrolls while text typing is in progress.
-  * All parameters for both Jiggler and Scroller are configurable in the web UI and persisted in NVS flash (`Preferences`).
+  * All parameters for Keyboard, Jiggler, and Scroller are validated, clamped on the server, synced back to the web UI on save, and persisted in NVS flash (`Preferences`).
 * **Secure Zero-Touch Wi-Fi Provisioning (SoftAP + Captive Portal):**
   * No Wi-Fi credentials are hardcoded in the firmware.
   * Unique per-device hostname and Access Point SSID based on the chip's MAC address: `vkeyxxxx` (last 4 hex digits of MAC).
   * On first boot (or after NVS reset), generates a random 12-character WPA2 password using the ESP32 hardware RNG (`esp_random()`) from an unambiguous lowercase alphanumeric character set (`abcdefghjkmnpqrstuvwxyz23456789`) and stores it in NVS.
-  * Built-in Wi-Fi network scanner and Captive Portal (`DNSServer`) for configuring home Wi-Fi from any phone or laptop.
-  * Accessible on the local network via mDNS at **`http://vkey.local`** or by IP address.
+  * Pre-scans surrounding Wi-Fi networks in pure `WIFI_STA` mode before launching `WIFI_AP` so smartphones (including Android / Xiaomi Captive Portals) never drop the hotspot connection due to channel hopping when opening the setup page.
+  * Dedicated `/wifi` setup page (automatically opened by the Captive Portal in AP mode) organized into 3 clear cards: **1. Current Network Status**, **2. Connect to Home Wi-Fi Router (Client Mode)** (showing connection failure status when in fallback AP mode), and **3. ESP32 Built-in Access Point (Fallback Hotspot)**.
+  * Accessible on the local network via mDNS at **`http://vkey.local`** or by IP address, with automatic Wi-Fi reconnection (`WiFi.setAutoReconnect(true)`) if the home router restarts.
 * **Hardware `BOOT` Button Controls:**
   * **Short press (`50 ms – 3 s`):** Types human-readable connection instructions directly into the active text field on the BLE-connected computer:
-    * In AP mode: `Please connect to wifi access point vkeyxxxx with password <password>, then navigate to captive portal or manually open http://192.168.4.1`
-    * In home Wi-Fi mode: `Please connect via configured wifi network to http://<dhcp-ip>`
-  * **Long press (hold for `3 seconds` after power-on):** Full factory reset — erases all NVS data (Wi-Fi credentials, generated AP password, Jiggler settings, and BLE bonds) and reboots.
-* **Live Memory Diagnostics:**
+    * In AP mode: `Please connect to wifi access point vkeyxxxx with password <password>, then navigate to captive portal or manually open http://192.168.4.1/wifi`
+    * In home Wi-Fi mode (connected): `Please connect via configured wifi network to http://<dhcp-ip>`
+    * In home Wi-Fi mode (disconnected/reconnecting): `Wi-Fi network <ssid> is currently disconnected (reconnecting). Check router or reboot device to start Access Point`
+  * **Long press (hold for `3 seconds` after power-on):** Full factory reset — safely releases keys / turns off `Caps Lock` if active, erases all NVS data (Wi-Fi credentials, generated AP password, Keyboard/Jiggler/Scroller settings, and BLE bonds), and reboots.
+* **Live Memory Diagnostics & Concise Serial Logging:**
   * Displays real-time Free Heap RAM and Maximum Contiguous Allocatable Block in the web UI header.
+  * Logs key lifecycle events, BLE connect/disconnect transitions, Wi-Fi scans, settings updates, Jiggler/Scroller actions, and truncated typing previews (`[CAPS:ON]`, `[CAPS:OFF]`, `[S+X]`, capped at 256 characters) to `Serial` (`115200 baud`).
 
 ---
 
@@ -43,12 +46,12 @@ It is designed for pasting text and scripts into machines where clipboard sharin
 3. Open any plain text editor (e.g., Notepad) on the target computer, ensure the **US English** keyboard layout is active, and place the cursor in the editor.
 4. **Short-press the physical `BOOT` button** on the ESP32 board. In Access Point mode, it will type out:
    ```text
-   Please connect to wifi access point vkeya1b2 with password k9m4x7p2q8n3, then navigate to captive portal or manually open http://192.168.4.1
+   Please connect to wifi access point vkeya1b2 with password k9m4x7p2q8n3, then navigate to captive portal or manually open http://192.168.4.1/wifi
    ```
    *(When already connected to your home Wi-Fi, a short press on `BOOT` will instead type: `Please connect via configured wifi network to http://192.168.1.xxx`)*
 5. Connect your phone or PC to the Wi-Fi network **`vkeya1b2`** using the printed password.
-6. A Captive Portal window will open automatically (or navigate to **`http://192.168.4.1`** in your browser).
-7. Under **Wi-Fi Settings**, select your home Wi-Fi network from the scanned dropdown (or type the SSID manually), enter your Wi-Fi password, and click **Save Wi-Fi & Reboot**.
+6. A Captive Portal window will open automatically to the Wi-Fi setup page (or navigate to **`http://192.168.4.1/wifi`** in your browser).
+7. In the **Connect to Home Wi-Fi Router** card, select your home Wi-Fi network from the scanned dropdown (or type the SSID manually), enter your Wi-Fi password, and click **Save Wi-Fi & Reboot**.
 
 ### 2. Daily Operation
 * Once connected to your home router, open **`http://vkey.local`** in your browser (or use the IP address shown in your router's DHCP leases for `vkeyxxxx` — you can also short-press `BOOT` anytime to type out the new local IP).
@@ -56,7 +59,7 @@ It is designed for pasting text and scripts into machines where clipboard sharin
   * Make sure the target machine's active keyboard layout is **English (US)** and the cursor is focused in a plain text input field (avoid smart auto-closing/auto-indenting code editors like VS Code or Jupyter when typing raw code).
   * Paste your text into the text area and click **Print**.
 * **Changing Wi-Fi Networks:**
-  * You can update Wi-Fi credentials anytime at the bottom of the main web page (**Wi-Fi Settings**).
+  * Click **Wi-Fi & Network Settings →** (`/wifi`) at the top of the main page to view detailed network parameters or connect to a different Wi-Fi network.
   * If the saved Wi-Fi network is unreachable for 15 seconds on boot (e.g., you moved the device to a new location), the board automatically falls back to its WPA2 Access Point (`vkeyxxxx`).
 * **Factory Reset (`Reset NVS`):**
   * Hold the onboard **`BOOT` button for 3 seconds** (while the device is already powered on), or click **Reset NVS (Full Reset)** at the bottom of the web UI.
