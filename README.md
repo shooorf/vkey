@@ -23,7 +23,7 @@ It is designed for pasting text and scripts into machines where clipboard sharin
 * **Secure Zero-Touch Wi-Fi Provisioning (SoftAP + Captive Portal):**
   * No Wi-Fi credentials are hardcoded in the firmware.
   * Unique per-device hostname and Access Point SSID based on the chip's MAC address: `vkeyxxxx` (last 4 hex digits of MAC).
-  * On first boot (or after NVS reset), generates a random 12-character WPA2 password using the ESP32 hardware RNG (`esp_random()`) from an unambiguous lowercase alphanumeric character set (`abcdefghjkmnpqrstuvwxyz23456789`) and stores it in NVS.
+  * Deterministic per-board 10-character WPA2 password derived via `SHA-256` from internal factory-burned silicon IDs (`eFuse Block 2` 128-bit Unique ID, `eFuse Block 1` wafer data, and `64-bit SPI Flash Unique ID`) using an unambiguous lowercase alphanumeric character set (`abcdefghjkmnpqrstuvwxyz23456789`). These internal hardware IDs are never broadcast over radio and remain constant even after `Reset NVS` or a full flash erase, so your phone/PC never needs to re-enter a new AP password after resetting the board.
   * Pre-scans surrounding Wi-Fi networks in pure `WIFI_STA` mode before launching `WIFI_AP` so smartphones (including Android / Xiaomi Captive Portals) never drop the hotspot connection due to channel hopping when opening the setup page.
   * Dedicated `/wifi` setup page organized into 3 clear cards: **1. Current Network Status**, **2. Connect to Home Wi-Fi Router (Client Mode)** (showing connection failure status when in fallback AP mode), and **3. ESP32 Built-in Access Point (Fallback Hotspot)**. The Captive Portal opens the main page (`/`) directly so you can immediately use the keyboard/mouse in AP mode or click the top banner link to configure Wi-Fi (`/wifi`).
   * Accessible on the local network via mDNS at **`http://vkey.local`** or by IP address, with automatic Wi-Fi reconnection (`WiFi.setAutoReconnect(true)`) if the home router restarts.
@@ -47,7 +47,7 @@ It is designed for pasting text and scripts into machines where clipboard sharin
 3. Open any plain text editor (e.g., Notepad) on the target computer, ensure the **US English** keyboard layout is active, and place the cursor in the editor.
 4. **Short-press the physical `BOOT` button** on the ESP32 board. In Access Point mode, it will type out:
    ```text
-   Please connect to wifi access point vkeya1b2 with password k9m4x7p2q8n3, then navigate to captive portal or manually open http://192.168.4.1
+   Please connect to wifi access point vkeya1b2 with password k9m4x7p2q8, then navigate to captive portal or manually open http://192.168.4.1
    ```
    *(When already connected to your home Wi-Fi, a short press on `BOOT` will instead type: `Please connect via configured wifi network to http://192.168.1.xxx`)*
 5. Connect your phone or PC to the Wi-Fi network **`vkeya1b2`** using the printed password.
