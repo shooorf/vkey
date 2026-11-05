@@ -153,72 +153,130 @@ const char htmlPage[] PROGMEM = R"=====(
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ESP32 BLE KeyBoard</title>
 <style>
-  body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: auto; }
-  textarea { width: 100%; padding: 10px; box-sizing: border-box; }
-  input[type="text"], input[type="password"], select { width: 100%; padding: 8px; box-sizing: border-box; margin-top: 4px; margin-bottom: 10px; }
-  .btn { padding: 12px 24px; font-size: 16px; font-weight: bold; cursor: pointer; margin-right: 10px; margin-bottom: 10px; }
+  body { font-family: sans-serif; padding: 14px; max-width: 600px; margin: auto; color: #222; }
+  h2 { margin-top: 4px; margin-bottom: 12px; }
+  h3 { margin-top: 0; margin-bottom: 12px; }
+  textarea { width: 100%; padding: 10px; box-sizing: border-box; font-size: 14px; }
+  .btn { padding: 10px 20px; font-size: 15px; font-weight: bold; cursor: pointer; margin-right: 8px; margin-bottom: 6px; }
   #status { font-weight: bold; color: #333; margin-top: 10px; margin-bottom: 10px; }
-  #netInfo { font-size: 14px; color: #555; margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 6px; line-height: 1.6; }
-  .ap-banner { background: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 14px; display: none; }
-  .nav-link { font-weight: bold; color: #0056b3; text-decoration: none; }
+  #netInfo { font-size: 13px; color: #555; margin-bottom: 12px; padding: 10px 12px; background: #f5f5f5; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+  .ap-banner { background: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 10px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 14px; display: none; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+  .nav-link { font-weight: bold; color: #0056b3; text-decoration: none; white-space: nowrap; }
   .nav-link:hover { text-decoration: underline; }
+  .form-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-bottom: 10px; font-size: 14px; }
+  .form-label { color: #333; }
+  .form-pair { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+  .form-pair label { display: inline-flex; align-items: center; gap: 4px; color: #555; font-size: 13px; }
+  .form-pair input[type="number"] { width: 58px; padding: 5px; box-sizing: border-box; font-size: 14px; text-align: center; }
+  .check-row { display: block; font-size: 14px; font-weight: bold; margin-bottom: 12px; cursor: pointer; }
+  hr { border: 0; border-top: 1px solid #ccc; margin: 18px 0; }
 </style>
 </head>
 <body>
   <div id="apBanner" class="ap-banner">
-    Home Wi-Fi is not configured (AP mode). <a href="/wifi" class="nav-link">Wi-Fi Settings &rarr;</a>
+    <span>Home Wi-Fi is not configured (AP mode).</span> <a href="/wifi" class="nav-link">Wi-Fi Settings &rarr;</a>
   </div>
   <h2>ESP32 BLE KeyBoard</h2>
   <div id="netInfo">Loading device info...</div>
   <div id="status">Status: Ready</div>
 
   <form id="typeForm" action="/type" method="POST">
-    <textarea name="payload" id="payloadText" rows="12" placeholder="Enter text..."></textarea><br><br>
+    <textarea name="payload" id="payloadText" rows="10" placeholder="Enter text..."></textarea><br><br>
     <input type="submit" id="printBtn" class="btn" value="Print">
     <button type="button" id="cancelBtn" class="btn" onclick="fetch('/cancel').then(()=>updateStatus())">Cancel</button>
   </form>
 
-  <br><hr><br>
+  <hr>
   <h3>Keyboard Settings</h3>
   <form id="keyboardForm">
-    Min Key Press Hold (ms): <input type="number" name="kb_prs_min" id="set_kb_prs_min" min="1" required style="width:60px;">
-    Max Key Press Hold (ms): <input type="number" name="kb_prs_max" id="set_kb_prs_max" min="1" required style="width:60px;"><br><br>
-    Min Delay Between Keys (ms): <input type="number" name="kb_dly_min" id="set_kb_dly_min" min="1" required style="width:60px;">
-    Max Delay Between Keys (ms): <input type="number" name="kb_dly_max" id="set_kb_dly_max" min="1" required style="width:60px;"><br><br>
+    <div class="form-row">
+      <span class="form-label">Key Press Hold (ms):</span>
+      <div class="form-pair">
+        <label>Min <input type="number" name="kb_prs_min" id="set_kb_prs_min" min="1" required></label>
+        <label>Max <input type="number" name="kb_prs_max" id="set_kb_prs_max" min="1" required></label>
+      </div>
+    </div>
+    <div class="form-row">
+      <span class="form-label">Delay Between Keys (ms):</span>
+      <div class="form-pair">
+        <label>Min <input type="number" name="kb_dly_min" id="set_kb_dly_min" min="1" required></label>
+        <label>Max <input type="number" name="kb_dly_max" id="set_kb_dly_max" min="1" required></label>
+      </div>
+    </div>
     <button type="submit" class="btn">Save Keyboard Settings</button>
   </form>
 
-  <br><hr><br>
+  <hr>
   <h3>Jiggler Settings</h3>
   <form id="settingsForm">
-    <label><input type="checkbox" name="enabled" id="set_enabled"> Enable Jiggler</label><br><br>
-    Min Interval (sec): <input type="number" name="int_min" id="set_int_min" min="1" required style="width:60px;">
-    Max Interval (sec): <input type="number" name="int_max" id="set_int_max" min="1" required style="width:60px;"><br><br>
-    Min Shift (px): <input type="number" name="shift_min" id="set_shift_min" min="1" max="127" required style="width:60px;">
-    Max Shift (px): <input type="number" name="shift_max" id="set_shift_max" min="1" max="127" required style="width:60px;"><br><br>
-    Min Return (ms): <input type="number" name="ret_min" id="set_ret_min" min="1" required style="width:60px;">
-    Max Return (ms): <input type="number" name="ret_max" id="set_ret_max" min="1" required style="width:60px;"><br><br>
+    <label class="check-row"><input type="checkbox" name="enabled" id="set_enabled"> Enable Jiggler</label>
+    <div class="form-row">
+      <span class="form-label">Interval (sec):</span>
+      <div class="form-pair">
+        <label>Min <input type="number" name="int_min" id="set_int_min" min="1" required></label>
+        <label>Max <input type="number" name="int_max" id="set_int_max" min="1" required></label>
+      </div>
+    </div>
+    <div class="form-row">
+      <span class="form-label">Shift Distance (px):</span>
+      <div class="form-pair">
+        <label>Min <input type="number" name="shift_min" id="set_shift_min" min="1" max="127" required></label>
+        <label>Max <input type="number" name="shift_max" id="set_shift_max" min="1" max="127" required></label>
+      </div>
+    </div>
+    <div class="form-row">
+      <span class="form-label">Return Delay (ms):</span>
+      <div class="form-pair">
+        <label>Min <input type="number" name="ret_min" id="set_ret_min" min="1" required></label>
+        <label>Max <input type="number" name="ret_max" id="set_ret_max" min="1" required></label>
+      </div>
+    </div>
     <button type="submit" class="btn">Save Jiggler Settings</button>
   </form>
 
-  <br><hr><br>
+  <hr>
   <h3>Scroller Settings</h3>
   <form id="scrollerForm">
-    <label><input type="checkbox" name="sc_enabled" id="set_sc_enabled"> Enable Random Scroller</label><br><br>
-    Min Interval (sec): <input type="number" name="sc_int_min" id="set_sc_int_min" min="1" required style="width:60px;">
-    Max Interval (sec): <input type="number" name="sc_int_max" id="set_sc_int_max" min="1" required style="width:60px;"><br><br>
-    Min Burst Steps: <input type="number" name="sc_cnt_min" id="set_sc_cnt_min" min="1" required style="width:60px;">
-    Max Burst Steps: <input type="number" name="sc_cnt_max" id="set_sc_cnt_max" min="1" required style="width:60px;"><br><br>
-    Min Step Delay (ms): <input type="number" name="sc_dly_min" id="set_sc_dly_min" min="10" required style="width:60px;">
-    Max Step Delay (ms): <input type="number" name="sc_dly_max" id="set_sc_dly_max" min="10" required style="width:60px;"><br><br>
-    Min Step (ticks, 1 &approx; 100px): <input type="number" name="sc_stp_min" id="set_sc_stp_min" min="1" max="127" required style="width:60px;">
-    Max Step (ticks): <input type="number" name="sc_stp_max" id="set_sc_stp_max" min="1" max="127" required style="width:60px;"><br><br>
-    Min Return Delay (sec): <input type="number" name="sc_ret_min" id="set_sc_ret_min" min="1" required style="width:60px;">
-    Max Return Delay (sec): <input type="number" name="sc_ret_max" id="set_sc_ret_max" min="1" required style="width:60px;"><br><br>
+    <label class="check-row"><input type="checkbox" name="sc_enabled" id="set_sc_enabled"> Enable Random Scroller</label>
+    <div class="form-row">
+      <span class="form-label">Interval (sec):</span>
+      <div class="form-pair">
+        <label>Min <input type="number" name="sc_int_min" id="set_sc_int_min" min="1" required></label>
+        <label>Max <input type="number" name="sc_int_max" id="set_sc_int_max" min="1" required></label>
+      </div>
+    </div>
+    <div class="form-row">
+      <span class="form-label">Burst Steps:</span>
+      <div class="form-pair">
+        <label>Min <input type="number" name="sc_cnt_min" id="set_sc_cnt_min" min="1" required></label>
+        <label>Max <input type="number" name="sc_cnt_max" id="set_sc_cnt_max" min="1" required></label>
+      </div>
+    </div>
+    <div class="form-row">
+      <span class="form-label">Step Delay (ms):</span>
+      <div class="form-pair">
+        <label>Min <input type="number" name="sc_dly_min" id="set_sc_dly_min" min="10" required></label>
+        <label>Max <input type="number" name="sc_dly_max" id="set_sc_dly_max" min="10" required></label>
+      </div>
+    </div>
+    <div class="form-row">
+      <span class="form-label">Step (ticks, 1 &approx; 100px):</span>
+      <div class="form-pair">
+        <label>Min <input type="number" name="sc_stp_min" id="set_sc_stp_min" min="1" max="127" required></label>
+        <label>Max <input type="number" name="sc_stp_max" id="set_sc_stp_max" min="1" max="127" required></label>
+      </div>
+    </div>
+    <div class="form-row">
+      <span class="form-label">Return Delay (sec):</span>
+      <div class="form-pair">
+        <label>Min <input type="number" name="sc_ret_min" id="set_sc_ret_min" min="1" required></label>
+        <label>Max <input type="number" name="sc_ret_max" id="set_sc_ret_max" min="1" required></label>
+      </div>
+    </div>
     <button type="submit" class="btn">Save Scroller Settings</button>
   </form>
 
-  <br><hr><br>
+  <hr>
   <button type="button" class="btn" style="background-color: #ffcccc;" onclick="if(confirm('Erase all settings (Wi-Fi, Jiggler, BLE bonds) and Reboot?')) fetch('/reset_nvs');">Reset NVS (Full Reset)</button>
 
   <script>
@@ -246,18 +304,18 @@ const char htmlPage[] PROGMEM = R"=====(
         }
 
         if (data.ap_mode) {
-          apBanner.style.display = 'block';
+          apBanner.style.display = 'flex';
           if (data.ssid) {
-            apBanner.innerHTML = `Home Wi-Fi <b>"${escHtml(data.ssid)}"</b> unreachable (AP mode). <a href="/wifi" class="nav-link">Wi-Fi Settings &rarr;</a>`;
+            apBanner.innerHTML = `<span>Home Wi-Fi <b>"${escHtml(data.ssid)}"</b> unreachable (AP mode).</span> <a href="/wifi" class="nav-link">Wi-Fi Settings &rarr;</a>`;
           } else {
-            apBanner.innerHTML = `Home Wi-Fi is not configured (AP mode). <a href="/wifi" class="nav-link">Wi-Fi Settings &rarr;</a>`;
+            apBanner.innerHTML = `<span>Home Wi-Fi is not configured (AP mode).</span> <a href="/wifi" class="nav-link">Wi-Fi Settings &rarr;</a>`;
           }
         } else {
           apBanner.style.display = 'none';
         }
         let freeKb = (data.free_heap / 1024).toFixed(1);
         let maxBlockKb = (data.max_alloc / 1024).toFixed(1);
-        netInfoDiv.innerHTML = `Free RAM: <b>${freeKb} KB</b> (Max contiguous block: <b>${maxBlockKb} KB</b>) &nbsp;|&nbsp; <a href="/wifi" class="nav-link">Wi-Fi Settings &rarr;</a>`;
+        netInfoDiv.innerHTML = `<span>Free RAM: <b>${freeKb} KB</b> (Max block: <b>${maxBlockKb} KB</b>)</span> <a href="/wifi" class="nav-link">Wi-Fi Settings &rarr;</a>`;
       }).catch(() => {});
     }
 
@@ -341,21 +399,26 @@ const char wifiPage[] PROGMEM = R"=====(
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Wi-Fi &amp; Network Settings - ESP32 BLE KeyBoard</title>
 <style>
-  body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: auto; color: #222; }
-  input[type="text"], input[type="password"], select { width: 100%; padding: 8px; box-sizing: border-box; margin-top: 4px; margin-bottom: 12px; }
-  .btn { padding: 12px 24px; font-size: 16px; font-weight: bold; cursor: pointer; margin-right: 10px; margin-bottom: 10px; }
-  .btn-sm { padding: 8px 16px; font-size: 14px; cursor: pointer; margin-bottom: 10px; }
-  .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin-bottom: 20px; background: #fafafa; }
-  .card h3 { margin-top: 0; margin-bottom: 8px; }
-  .card-desc { font-size: 13px; color: #666; margin-top: 0; margin-bottom: 12px; }
-  .info-row { margin-bottom: 8px; font-size: 14px; }
-  .info-label { color: #555; display: inline-block; min-width: 190px; }
-  .badge-ap { display: inline-block; padding: 4px 10px; border-radius: 4px; background: #fff3cd; border: 1px solid #ffeeba; color: #856404; font-weight: bold; }
-  .badge-sta { display: inline-block; padding: 4px 10px; border-radius: 4px; background: #d4edda; border: 1px solid #c3e6cb; color: #155724; font-weight: bold; }
-  .badge-err { display: inline-block; padding: 4px 10px; border-radius: 4px; background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; font-weight: bold; }
-  .nav-link { font-weight: bold; color: #0056b3; text-decoration: none; display: inline-block; margin-bottom: 15px; }
+  body { font-family: sans-serif; padding: 14px; max-width: 600px; margin: auto; color: #222; }
+  h2 { margin-top: 4px; margin-bottom: 12px; }
+  input[type="text"], input[type="password"], select { width: 100%; padding: 8px; box-sizing: border-box; margin-top: 4px; margin-bottom: 12px; font-size: 14px; }
+  label { display: block; font-size: 14px; font-weight: bold; margin-top: 6px; }
+  .btn { padding: 10px 20px; font-size: 15px; font-weight: bold; cursor: pointer; margin-top: 4px; }
+  .btn-sm { padding: 6px 12px; font-size: 13px; cursor: pointer; }
+  .scan-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 4px; margin-bottom: 4px; }
+  .scan-header label { margin: 0; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 14px; margin-bottom: 16px; background: #fafafa; }
+  .card h3 { margin-top: 0; margin-bottom: 6px; font-size: 17px; }
+  .card-desc { font-size: 13px; color: #666; margin-top: 0; margin-bottom: 10px; line-height: 1.4; }
+  .info-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 6px 0; border-bottom: 1px solid #eee; font-size: 14px; }
+  .info-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .info-label { color: #555; }
+  .badge-ap { display: inline-block; padding: 3px 8px; border-radius: 4px; background: #fff3cd; border: 1px solid #ffeeba; color: #856404; font-weight: bold; font-size: 13px; }
+  .badge-sta { display: inline-block; padding: 3px 8px; border-radius: 4px; background: #d4edda; border: 1px solid #c3e6cb; color: #155724; font-weight: bold; font-size: 13px; }
+  .badge-err { display: inline-block; padding: 3px 8px; border-radius: 4px; background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; font-weight: bold; font-size: 13px; }
+  .nav-link { font-weight: bold; color: #0056b3; text-decoration: none; display: inline-block; margin-bottom: 10px; }
   .nav-link:hover { text-decoration: underline; }
-  code { background: #eee; padding: 2px 6px; border-radius: 4px; font-size: 14px; }
+  code { background: #eee; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -365,7 +428,7 @@ const char wifiPage[] PROGMEM = R"=====(
   <div class="card">
     <h3>1. Current Network Status</h3>
     <p class="card-desc">Shows how the ESP32 is currently connected and reachable right now.</p>
-    <div class="info-row"><span class="info-label">Current Operating Mode:</span> <span id="curMode">Loading...</span></div>
+    <div class="info-row"><span class="info-label">Operating Mode:</span> <span id="curMode">Loading...</span></div>
     <div class="info-row"><span class="info-label">Active Network (SSID):</span> <b id="curNetwork">-</b></div>
     <div class="info-row"><span class="info-label">Current IP Address:</span> <code id="curIp">-</code></div>
     <div class="info-row"><span class="info-label">mDNS Address:</span> <code>http://vkey.local</code></div>
@@ -375,12 +438,14 @@ const char wifiPage[] PROGMEM = R"=====(
   <div class="card">
     <h3>2. Connect to Home Wi-Fi Router (Client Mode)</h3>
     <p class="card-desc">Select your external Wi-Fi router below so the ESP32 connects to your local network on boot.</p>
-    <div class="info-row"><span class="info-label">Saved Home Wi-Fi SSID:</span> <b id="savedSsidText">-</b></div>
-    <div class="info-row"><span class="info-label">Home Wi-Fi Status:</span> <span id="homeWifiStatus">-</span></div>
-    <hr style="border:0; border-top:1px solid #ddd; margin: 12px 0;">
+    <div class="info-row"><span class="info-label">Saved Home SSID:</span> <b id="savedSsidText">-</b></div>
+    <div class="info-row" style="border-bottom:none;"><span class="info-label">Home Wi-Fi Status:</span> <span id="homeWifiStatus">-</span></div>
+    <hr style="border:0; border-top:1px solid #ddd; margin: 10px 0 12px 0;">
     <form id="wifiForm">
-      <button type="button" id="scanBtn" class="btn-sm" onclick="scanWifi(true)">Rescan Wi-Fi Networks</button>
-      <label for="ssidSelect">Available Wi-Fi Networks:</label>
+      <div class="scan-header">
+        <label for="ssidSelect">Available Wi-Fi Networks:</label>
+        <button type="button" id="scanBtn" class="btn-sm" onclick="scanWifi(true)">Rescan Networks</button>
+      </div>
       <select id="ssidSelect" onchange="if(this.value) document.getElementById('wifi_ssid').value=this.value;">
         <option value="">-- Scanning networks... --</option>
       </select>
@@ -394,8 +459,8 @@ const char wifiPage[] PROGMEM = R"=====(
 
   <div class="card">
     <h3>3. ESP32 Built-in Access Point (Fallback Hotspot)</h3>
-    <p class="card-desc">These are the credentials of the ESP32's own built-in Wi-Fi hotspot. It turns on automatically only when no home Wi-Fi is configured or when your home router is unreachable.</p>
-    <div class="info-row"><span class="info-label">Built-in Hotspot State:</span> <b id="apState">-</b></div>
+    <p class="card-desc">Credentials of the ESP32's own built-in Wi-Fi hotspot (active when no home Wi-Fi is configured or when your home router is unreachable).</p>
+    <div class="info-row"><span class="info-label">Hotspot State:</span> <b id="apState">-</b></div>
     <div class="info-row"><span class="info-label">ESP32 AP Name (SSID):</span> <code id="apSsid">-</code></div>
     <div class="info-row"><span class="info-label">ESP32 AP Password (WPA2):</span> <code id="apPass">-</code></div>
     <div class="info-row"><span class="info-label">ESP32 AP Default IP:</span> <code>http://192.168.4.1</code></div>
@@ -412,21 +477,21 @@ const char wifiPage[] PROGMEM = R"=====(
         const homeWifiStatus = document.getElementById('homeWifiStatus');
 
         if (data.ap_mode) {
-          curNetwork.textContent = data.hostname + ' (ESP32 Built-in Hotspot)';
+          curNetwork.textContent = data.hostname + ' (ESP32 AP)';
           if (data.ssid) {
-            curMode.innerHTML = '<span class="badge-ap">ESP32 Access Point (Fallback Mode)</span>';
-            homeWifiStatus.innerHTML = '<span class="badge-err">Failed to connect (network unreachable or wrong password)</span>';
-            apState.textContent = 'Active now (fallback because Home Wi-Fi connection failed)';
+            curMode.innerHTML = '<span class="badge-ap">AP Mode (Fallback)</span>';
+            homeWifiStatus.innerHTML = '<span class="badge-err">Failed to connect</span>';
+            apState.textContent = 'Active (Fallback)';
           } else {
-            curMode.innerHTML = '<span class="badge-ap">ESP32 Access Point (Initial Setup Mode)</span>';
+            curMode.innerHTML = '<span class="badge-ap">AP Mode (Initial Setup)</span>';
             homeWifiStatus.textContent = 'Not configured yet';
-            apState.textContent = 'Active now (waiting for Home Wi-Fi setup)';
+            apState.textContent = 'Active (Setup Mode)';
           }
         } else {
-          curMode.innerHTML = '<span class="badge-sta">Connected to Home Wi-Fi (Client Mode)</span>';
+          curMode.innerHTML = '<span class="badge-sta">Client Mode (Home Wi-Fi)</span>';
           curNetwork.textContent = data.ssid;
           homeWifiStatus.innerHTML = '<span class="badge-sta">Connected</span>';
-          apState.textContent = 'Standby (inactive while connected to Home Wi-Fi)';
+          apState.textContent = 'Standby (Inactive)';
         }
 
         document.getElementById('curIp').textContent = 'http://' + data.ip;
@@ -459,11 +524,11 @@ const char wifiPage[] PROGMEM = R"=====(
           select.appendChild(opt);
         });
         scanBtn.disabled = false;
-        scanBtn.textContent = 'Rescan Wi-Fi Networks';
+        scanBtn.textContent = 'Rescan Networks';
       }).catch(() => {
         select.innerHTML = '<option value="">-- Scan failed, enter SSID manually --</option>';
         scanBtn.disabled = false;
-        scanBtn.textContent = 'Rescan Wi-Fi Networks';
+        scanBtn.textContent = 'Rescan Networks';
       });
     }
 
