@@ -147,6 +147,12 @@ int scrollDirection = 1;
 int scrollStepsRemaining = 0;
 int scrollAccumulatedTicks = 0;
 
+// Sleep Timer state variables (stored in RAM only, not persisted in NVS)
+bool sleepTimerActive = false;
+bool sleepTimerExpired = false;
+unsigned long sleepTimerStartMs = 0;
+unsigned long sleepTimerDurationMs = 8UL * 3600UL * 1000UL;
+
 // Store HTML in Flash memory using PROGMEM and Raw String Literal (R"=====( ... )=====")
 const char htmlPage[] PROGMEM = R"=====(
 <!DOCTYPE html><html><head><meta charset="UTF-8">
@@ -277,6 +283,18 @@ const char htmlPage[] PROGMEM = R"=====(
   </form>
 
   <hr>
+  <h3>Sleep Timer (RAM Only)</h3>
+  <div class="form-row">
+    <span class="form-label">Stop Mouse &amp; Scroller after (hours):</span>
+    <div class="form-pair">
+      <input type="number" id="sleep_hours" value="8" min="0.01" max="168" step="any" required style="width:70px;">
+    </div>
+  </div>
+  <div id="sleepStatus" style="font-size:14px; font-weight:bold; color:#666; margin-bottom:10px;">Sleep Timer: Disabled</div>
+  <button type="button" class="btn" onclick="setSleepTimer('start')">Start / Restart Timer</button>
+  <button type="button" id="sleepStopBtn" class="btn" onclick="setSleepTimer('stop')" disabled>Disable Timer</button>
+
+  <hr>
   <button type="button" class="btn" style="background-color: #ffcccc;" onclick="if(confirm('Erase all settings (Wi-Fi, Jiggler, BLE bonds) and Reboot?')) fetch('/reset_nvs');">Reset NVS (Full Reset)</button>
 
   <script>
@@ -284,13 +302,56 @@ const char htmlPage[] PROGMEM = R"=====(
     const printBtn = document.getElementById('printBtn');
     const netInfoDiv = document.getElementById('netInfo');
     const apBanner = document.getElementById('apBanner');
+    const sleepStatusDiv = document.getElementById('sleepStatus');
+    const sleepStopBtn = document.getElementById('sleepStopBtn');
+
+    let sleepActive = false;
+    let sleepRemSec = 0;
+    let isPrintingNow = false;
+    let pollTick = 0;
 
     function escHtml(s) {
       return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
+    function formatHms(totalSec) {
+      const h = Math.floor(totalSec / 3600);
+      const m = Math.floor((totalSec % 3600) / 60);
+      const s = totalSec % 60;
+      return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+    }
+
+    function renderSleepStatus() {
+      if (!sleepActive) {
+        sleepStatusDiv.innerHTML = "<span style='color:#666;'>Sleep Timer: Disabled</span>";
+        sleepStopBtn.disabled = true;
+      } else if (sleepRemSec > 0) {
+        sleepStatusDiv.innerHTML = `<span style='color:#0056b3;'>Sleep Timer Active: ${formatHms(sleepRemSec)} remaining</span>`;
+        sleepStopBtn.disabled = false;
+      } else {
+        sleepStatusDiv.innerHTML = "<span style='color:#d9534f;'>Sleep Mode Active (Mouse &amp; Scroller paused)</span>";
+        sleepStopBtn.disabled = false;
+      }
+    }
+
+    function setSleepTimer(action) {
+      let data = new URLSearchParams();
+      data.set('action', action);
+      if (action === 'start') {
+        const hrs = parseFloat(document.getElementById('sleep_hours').value);
+        if (isNaN(hrs) || hrs <= 0) {
+          alert('Please enter a valid number of hours');
+          return;
+        }
+        data.set('hours', String(hrs));
+      }
+      fetch('/sleep', { method: 'POST', body: data })
+        .then(() => updateStatus());
+    }
+
     function updateStatus() {
       fetch('/status').then(r => r.json()).then(data => {
+        isPrintingNow = !!data.printing;
         if (!data.connected) {
           statusDiv.innerHTML = "<span style='color:red;'>BLE Not Connected</span>";
           printBtn.disabled = true;
@@ -302,6 +363,10 @@ const char htmlPage[] PROGMEM = R"=====(
           statusDiv.innerHTML = "<span style='color:green;'>Ready to Print</span>";
           printBtn.disabled = false;
         }
+
+        sleepActive = !!data.sleep_active;
+        sleepRemSec = Number(data.sleep_rem_sec) || 0;
+        renderSleepStatus();
 
         if (data.ap_mode) {
           apBanner.style.display = 'flex';
@@ -388,8 +453,17 @@ const char htmlPage[] PROGMEM = R"=====(
     };
 
     loadSettings();
-    setInterval(updateStatus, 1000); // Poll status every second
     updateStatus();
+    setInterval(function() {
+      if (sleepActive && sleepRemSec > 0) {
+        sleepRemSec--;
+        renderSleepStatus();
+      }
+      pollTick++;
+      if (!document.hidden && (isPrintingNow || pollTick % 5 === 0)) {
+        updateStatus();
+      }
+    }, 1000);
   </script>
 </body></html>
 )=====";
@@ -659,6 +733,14 @@ void startPrintText(const String& text) {
   if (!bleDevice.isConnected() || isPrinting || text.length() == 0) {
     return;
   }
+  // Ensure Jiggler cursor is returned and Scroller is stopped before typing starts
+  if (jiggleShifted) {
+    Mouse.move(-currentJiggleX, -currentJiggleY);
+    jiggleShifted = false;
+  }
+  scrollState = SCROLL_IDLE;
+  scrollAccumulatedTicks = 0;
+
   pendingText = text;
   printIndex = 0;
   isPrinting = true;
@@ -948,6 +1030,13 @@ void setup() {
 
   server.on("/status", []() {
     String ipStr = apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
+    unsigned long sleepRemSec = 0;
+    if (sleepTimerActive && !sleepTimerExpired) {
+      unsigned long elapsed = millis() - sleepTimerStartMs;
+      if (elapsed < sleepTimerDurationMs) {
+        sleepRemSec = (sleepTimerDurationMs - elapsed + 999UL) / 1000UL;
+      }
+    }
     String json = "{";
     json += "\"connected\":" + String(bleDevice.isConnected() ? "true" : "false") + ",";
     json += "\"printing\":" + String(isPrinting ? "true" : "false") + ",";
@@ -959,7 +1048,9 @@ void setup() {
     json += "\"hostname\":\"" + jsonEscape(myHostname) + "\",";
     json += "\"ap_pass\":\"" + jsonEscape(apPass) + "\",";
     json += "\"ip\":\"" + jsonEscape(ipStr) + "\",";
-    json += "\"ssid\":\"" + jsonEscape(savedSsid) + "\"";
+    json += "\"ssid\":\"" + jsonEscape(savedSsid) + "\",";
+    json += "\"sleep_active\":" + String(sleepTimerActive ? "true" : "false") + ",";
+    json += "\"sleep_rem_sec\":" + String(sleepRemSec);
     json += "}";
     server.send(200, "application/json", json);
   });
@@ -1088,6 +1179,31 @@ void setup() {
     server.send(200, "text/plain", "OK");
   });
 
+  server.on("/sleep", HTTP_POST, []() {
+    String action = server.hasArg("action") ? server.arg("action") : "start";
+    if (action == "stop") {
+      sleepTimerActive = false;
+      sleepTimerExpired = false;
+      lastJiggleActionTime = millis();
+      lastScrollActionTime = millis();
+      Serial.println("Sleep timer disabled");
+      server.send(200, "text/plain", "OK");
+    } else {
+      float hours = server.hasArg("hours") ? server.arg("hours").toFloat() : 8.0f;
+      if (hours < 0.01f) hours = 0.01f;
+      if (hours > 168.0f) hours = 168.0f;
+      sleepTimerDurationMs = (unsigned long)(hours * 3600.0f * 1000.0f);
+      if (sleepTimerDurationMs < 1000UL) sleepTimerDurationMs = 1000UL;
+      sleepTimerStartMs = millis();
+      sleepTimerActive = true;
+      sleepTimerExpired = false;
+      lastJiggleActionTime = millis();
+      lastScrollActionTime = millis();
+      Serial.printf("Sleep timer started for %.2f hours (%lu sec)\n", hours, sleepTimerDurationMs / 1000UL);
+      server.send(200, "text/plain", "OK");
+    }
+  });
+
   server.on("/reset_nvs", []() {
     Serial.println("\nWeb UI /reset_nvs -> full NVS reset");
     server.send(200, "text/plain", "NVS Erased. Rebooting...");
@@ -1214,14 +1330,22 @@ void loop() {
     lastScrollActionTime = millis();
   }
 
-  // Keep idle timers fresh while actively typing text so Jiggler/Scroller count their interval from the end of typing
-  if (isPrinting) {
-    if (!jiggleShifted) lastJiggleActionTime = millis();
-    if (scrollState == SCROLL_IDLE) lastScrollActionTime = millis();
+  // Check RAM-only Sleep Timer (affects only Mouse Jiggler and Scroller, never Keyboard typing)
+  if (sleepTimerActive && !sleepTimerExpired && (millis() - sleepTimerStartMs >= sleepTimerDurationMs)) {
+    sleepTimerExpired = true;
+    scrollState = SCROLL_IDLE;
+    scrollAccumulatedTicks = 0;
+    Serial.println("\nSleep timer expired: Jiggler and Scroller paused");
   }
 
-  // Non-blocking Mouse Jiggler (paused while actively typing text, except returning a shifted cursor)
-  if ((jiggleEnabled || jiggleShifted) && bleDevice.isConnected() && (!isPrinting || jiggleShifted)) {
+  // Keep idle timers fresh while actively typing text so Jiggler/Scroller count their interval from the end of typing
+  if (isPrinting) {
+    lastJiggleActionTime = millis();
+    lastScrollActionTime = millis();
+  }
+
+  // Non-blocking Mouse Jiggler (completely inactive while typing text or when sleep timer has expired, except returning a shifted cursor)
+  if (((jiggleEnabled && !sleepTimerExpired) || jiggleShifted) && bleDevice.isConnected() && !isPrinting) {
     unsigned long currentMillis = millis();
     if (currentMillis - lastJiggleActionTime >= nextJiggleDelay) {
       if (!jiggleShifted) {
@@ -1248,8 +1372,8 @@ void loop() {
     }
   }
 
-  // Independent Non-blocking Mouse Scroller (paused while actively typing text, except finishing an active cycle)
-  if (scrollEnabled && bleDevice.isConnected() && (!isPrinting || scrollState != SCROLL_IDLE)) {
+  // Independent Non-blocking Mouse Scroller (completely inactive while typing text or when sleep timer has expired)
+  if (scrollEnabled && !sleepTimerExpired && bleDevice.isConnected() && !isPrinting) {
     unsigned long currentMillis = millis();
     if (currentMillis - lastScrollActionTime >= nextScrollDelay) {
       switch (scrollState) {

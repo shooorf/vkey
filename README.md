@@ -17,7 +17,8 @@ It is designed for pasting text and scripts into machines where clipboard sharin
 * **Configurable Non-Blocking Mouse Jiggler & Independent Mouse Scroller:**
   * **Mouse Jiggler:** Periodically shifts the mouse cursor by a small random offset (default `2–5 px` every `80–120 s`), waits `20–40 ms`, and returns the cursor to its exact starting position.
   * **Mouse Scroller (Disabled by default):** Independently simulates realistic human wheel scrolling bursts (default `3–5` steps in one direction with `60–80 ms` between steps, `1–2` wheel ticks ≈ `100–200 px` per step), waits `2–5 s`, and smoothly scrolls back by the exact accumulated amount to return the page to its original position. Disabling the Scroller immediately stops all scrolling operations.
-  * Automatically pauses new movements/scrolls while text typing is in progress.
+  * **RAM-Only Sleep Timer:** Optional countdown timer (default `8 hours`, stored in RAM only) that automatically pauses both Mouse Jiggler and Mouse Scroller after the specified work shift expires without modifying NVS settings or interrupting keyboard typing. Can be restarted or disabled anytime from the web UI with a live `HH:MM:SS` countdown.
+  * Completely pauses all mouse and scroll activity while text typing is in progress.
   * All parameters for Keyboard, Jiggler, and Scroller are validated, clamped on the server, synced back to the web UI on save, and persisted in NVS flash (`Preferences`).
 * **Secure Zero-Touch Wi-Fi Provisioning (SoftAP + Captive Portal):**
   * No Wi-Fi credentials are hardcoded in the firmware.
