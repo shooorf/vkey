@@ -31,10 +31,10 @@ Usage:
 * If no home Wi-Fi network is configured or the saved network is unreachable, the board starts a WPA2 Access Point named "vkeyxxxx" (where xxxx are the last 4 hex characters of its MAC address).
 * To get the current IP address and Access Point password: pair the board via Bluetooth ("Ugreen BT") with the target computer, focus any text input field (e.g., Notepad), and short-press the BOOT button on the board:
   - In AP setup mode, it will type:
-    Please connect to wifi access point vkeya1b2 with password xxxxxxxxxxxx, then navigate to captive portal or manually open http://192.168.4.1/wifi
+    Please connect to wifi access point vkeya1b2 with password xxxxxxxxxxxx, then navigate to captive portal or manually open http://192.168.4.1
   - When connected to a configured home Wi-Fi network, it will type:
     Please connect via configured wifi network to http://192.168.1.xxx
-* Connect to the "vkeyxxxx" Wi-Fi network from a phone or PC using that password — a Captive Portal will open (or navigate to http://192.168.4.1/wifi), select your home Wi-Fi network, enter the password, and click Save Wi-Fi & Reboot.
+* Connect to the "vkeyxxxx" Wi-Fi network from a phone or PC using that password — a Captive Portal will open (or navigate to http://192.168.4.1), where you can use the keyboard/mouse immediately or click "Wi-Fi Settings" (/wifi) to connect to your home Wi-Fi router.
 * Once connected to your home Wi-Fi, the web interface is accessible at http://vkey.local or via the board's IP address (shown in your router's DHCP leases as vkeyxxxx).
 * Onboard BOOT button (GPIO 9):
   - Short press — types connection instructions (AP SSID/password/URL in AP mode, or the DHCP IP URL when connected to home Wi-Fi) via BLE keyboard.
@@ -159,17 +159,16 @@ const char htmlPage[] PROGMEM = R"=====(
   .btn { padding: 12px 24px; font-size: 16px; font-weight: bold; cursor: pointer; margin-right: 10px; margin-bottom: 10px; }
   #status { font-weight: bold; color: #333; margin-top: 10px; margin-bottom: 10px; }
   #netInfo { font-size: 14px; color: #555; margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 6px; line-height: 1.6; }
-  .ap-banner { background: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 12px; border-radius: 6px; margin-bottom: 15px; display: none; }
+  .ap-banner { background: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 14px; display: none; }
   .nav-link { font-weight: bold; color: #0056b3; text-decoration: none; }
   .nav-link:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
-  <h2>ESP32 BLE KeyBoard</h2>
   <div id="apBanner" class="ap-banner">
-    <strong>Wi-Fi Setup Mode (Access Point)</strong><br>
-    The device is not connected to a home router. <a href="/wifi" class="nav-link">Open Wi-Fi &amp; Network Settings &rarr;</a>
+    Home Wi-Fi is not configured (AP mode). <a href="/wifi" class="nav-link">Wi-Fi Settings &rarr;</a>
   </div>
+  <h2>ESP32 BLE KeyBoard</h2>
   <div id="netInfo">Loading device info...</div>
   <div id="status">Status: Ready</div>
 
@@ -249,16 +248,16 @@ const char htmlPage[] PROGMEM = R"=====(
         if (data.ap_mode) {
           apBanner.style.display = 'block';
           if (data.ssid) {
-            apBanner.innerHTML = `<strong>Wi-Fi Fallback Mode (Access Point)</strong><br>Failed to connect to saved network <b>"${escHtml(data.ssid)}"</b>. <a href="/wifi" class="nav-link">Open Wi-Fi &amp; Network Settings &rarr;</a>`;
+            apBanner.innerHTML = `Home Wi-Fi <b>"${escHtml(data.ssid)}"</b> unreachable (AP mode). <a href="/wifi" class="nav-link">Wi-Fi Settings &rarr;</a>`;
           } else {
-            apBanner.innerHTML = `<strong>Wi-Fi Setup Mode (Access Point)</strong><br>The device is not connected to a home router. <a href="/wifi" class="nav-link">Open Wi-Fi &amp; Network Settings &rarr;</a>`;
+            apBanner.innerHTML = `Home Wi-Fi is not configured (AP mode). <a href="/wifi" class="nav-link">Wi-Fi Settings &rarr;</a>`;
           }
         } else {
           apBanner.style.display = 'none';
         }
         let freeKb = (data.free_heap / 1024).toFixed(1);
         let maxBlockKb = (data.max_alloc / 1024).toFixed(1);
-        netInfoDiv.innerHTML = `Free RAM: <b>${freeKb} KB</b> (Max contiguous block: <b>${maxBlockKb} KB</b>) &nbsp;|&nbsp; <a href="/wifi" class="nav-link">Wi-Fi &amp; Network Settings &rarr;</a>`;
+        netInfoDiv.innerHTML = `Free RAM: <b>${freeKb} KB</b> (Max contiguous block: <b>${maxBlockKb} KB</b>) &nbsp;|&nbsp; <a href="/wifi" class="nav-link">Wi-Fi Settings &rarr;</a>`;
       }).catch(() => {});
     }
 
@@ -640,7 +639,7 @@ void handleBootButton(bool allowShortPress = true) {
             infoStr = "Please connect to wifi access point " + myHostname +
                       " with password " + apPass +
                       ", then navigate to captive portal or manually open http://" +
-                      WiFi.softAPIP().toString() + "/wifi";
+                      WiFi.softAPIP().toString();
           } else if (WiFi.status() == WL_CONNECTED) {
             infoStr = "Please connect via configured wifi network to http://" +
                       WiFi.localIP().toString();
@@ -995,10 +994,10 @@ void setup() {
     eraseAllAndReboot();
   });
 
-  // Redirect all unknown requests to the Wi-Fi setup page (/wifi) for Captive Portal support in AP mode
+  // Redirect all unknown requests to the root page (/) for Captive Portal support in AP mode
   server.onNotFound([]() {
     if (apMode) {
-      server.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/wifi", true);
+      server.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/", true);
       server.send(302, "text/plain", "");
     } else {
       server.send(404, "text/plain", "Not found");

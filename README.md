@@ -24,11 +24,11 @@ It is designed for pasting text and scripts into machines where clipboard sharin
   * Unique per-device hostname and Access Point SSID based on the chip's MAC address: `vkeyxxxx` (last 4 hex digits of MAC).
   * On first boot (or after NVS reset), generates a random 12-character WPA2 password using the ESP32 hardware RNG (`esp_random()`) from an unambiguous lowercase alphanumeric character set (`abcdefghjkmnpqrstuvwxyz23456789`) and stores it in NVS.
   * Pre-scans surrounding Wi-Fi networks in pure `WIFI_STA` mode before launching `WIFI_AP` so smartphones (including Android / Xiaomi Captive Portals) never drop the hotspot connection due to channel hopping when opening the setup page.
-  * Dedicated `/wifi` setup page (automatically opened by the Captive Portal in AP mode) organized into 3 clear cards: **1. Current Network Status**, **2. Connect to Home Wi-Fi Router (Client Mode)** (showing connection failure status when in fallback AP mode), and **3. ESP32 Built-in Access Point (Fallback Hotspot)**.
+  * Dedicated `/wifi` setup page organized into 3 clear cards: **1. Current Network Status**, **2. Connect to Home Wi-Fi Router (Client Mode)** (showing connection failure status when in fallback AP mode), and **3. ESP32 Built-in Access Point (Fallback Hotspot)**. The Captive Portal opens the main page (`/`) directly so you can immediately use the keyboard/mouse in AP mode or click the top banner link to configure Wi-Fi (`/wifi`).
   * Accessible on the local network via mDNS at **`http://vkey.local`** or by IP address, with automatic Wi-Fi reconnection (`WiFi.setAutoReconnect(true)`) if the home router restarts.
 * **Hardware `BOOT` Button Controls:**
   * **Short press (`50 ms – 3 s`):** Types human-readable connection instructions directly into the active text field on the BLE-connected computer:
-    * In AP mode: `Please connect to wifi access point vkeyxxxx with password <password>, then navigate to captive portal or manually open http://192.168.4.1/wifi`
+    * In AP mode: `Please connect to wifi access point vkeyxxxx with password <password>, then navigate to captive portal or manually open http://192.168.4.1`
     * In home Wi-Fi mode (connected): `Please connect via configured wifi network to http://<dhcp-ip>`
     * In home Wi-Fi mode (disconnected/reconnecting): `Wi-Fi network <ssid> is currently disconnected (reconnecting). Check router or reboot device to start Access Point`
   * **Long press (hold for `3 seconds` after power-on):** Full factory reset — safely releases keys / turns off `Caps Lock` if active, erases all NVS data (Wi-Fi credentials, generated AP password, Keyboard/Jiggler/Scroller settings, and BLE bonds), and reboots.
@@ -46,11 +46,11 @@ It is designed for pasting text and scripts into machines where clipboard sharin
 3. Open any plain text editor (e.g., Notepad) on the target computer, ensure the **US English** keyboard layout is active, and place the cursor in the editor.
 4. **Short-press the physical `BOOT` button** on the ESP32 board. In Access Point mode, it will type out:
    ```text
-   Please connect to wifi access point vkeya1b2 with password k9m4x7p2q8n3, then navigate to captive portal or manually open http://192.168.4.1/wifi
+   Please connect to wifi access point vkeya1b2 with password k9m4x7p2q8n3, then navigate to captive portal or manually open http://192.168.4.1
    ```
    *(When already connected to your home Wi-Fi, a short press on `BOOT` will instead type: `Please connect via configured wifi network to http://192.168.1.xxx`)*
 5. Connect your phone or PC to the Wi-Fi network **`vkeya1b2`** using the printed password.
-6. A Captive Portal window will open automatically to the Wi-Fi setup page (or navigate to **`http://192.168.4.1/wifi`** in your browser).
+6. A Captive Portal window will open automatically to the main page (`http://192.168.4.1/`), where you can immediately use the keyboard/mouse in AP mode or click **Wi-Fi Settings →** (`/wifi`) in the top banner to connect the board to your home router.
 7. In the **Connect to Home Wi-Fi Router** card, select your home Wi-Fi network from the scanned dropdown (or type the SSID manually), enter your Wi-Fi password, and click **Save Wi-Fi & Reboot**.
 
 ### 2. Daily Operation
