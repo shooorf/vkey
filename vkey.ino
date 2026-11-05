@@ -419,6 +419,11 @@ const char wifiPage[] PROGMEM = R"=====(
   .nav-link { font-weight: bold; color: #0056b3; text-decoration: none; display: inline-block; margin-bottom: 10px; }
   .nav-link:hover { text-decoration: underline; }
   code { background: #eee; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  .pass-wrap { position: relative; display: flex; align-items: center; margin-top: 4px; margin-bottom: 12px; }
+  .pass-wrap input { margin: 0; padding-right: 40px; }
+  .eye-btn { position: absolute; right: 4px; background: none; border: none; font-size: 18px; cursor: pointer; padding: 4px 8px; opacity: 0.45; line-height: 1; }
+  .eye-btn.active { opacity: 1; }
+  input::-ms-reveal, input::-ms-clear { display: none; }
 </style>
 </head>
 <body>
@@ -452,7 +457,10 @@ const char wifiPage[] PROGMEM = R"=====(
       <label for="wifi_ssid">Home Wi-Fi SSID (Network Name):</label>
       <input type="text" name="ssid" id="wifi_ssid" placeholder="Enter your home Wi-Fi SSID" autocorrect="off" autocapitalize="none" spellcheck="false" required>
       <label for="wifi_pass">Home Wi-Fi Password:</label>
-      <input type="password" name="pass" id="wifi_pass" placeholder="Enter your home Wi-Fi password (leave empty if open)" autocorrect="off" autocapitalize="none" spellcheck="false">
+      <div class="pass-wrap">
+        <input type="password" name="pass" id="wifi_pass" placeholder="Enter your home Wi-Fi password (leave empty if open)" autocorrect="off" autocapitalize="none" spellcheck="false">
+        <button type="button" class="eye-btn" title="Show/Hide Password" onclick="const p=document.getElementById('wifi_pass');const s=p.type==='password';p.type=s?'text':'password';this.classList.toggle('active',s);">&#128065;</button>
+      </div>
       <button type="submit" class="btn">Save Wi-Fi &amp; Reboot</button>
     </form>
   </div>
@@ -728,19 +736,46 @@ void performWifiScan() {
     n = WiFi.scanNetworks();
   }
   String json = "[";
+  bool first = true;
+  int uniqueCount = 0;
   for (int i = 0; i < n; i++) {
-    if (i > 0) json += ",";
+    String ssid = WiFi.SSID(i);
+    if (ssid.length() == 0) continue; // Skip hidden networks with empty SSID
+
+    // Deduplicate: skip if this SSID was already processed earlier in the scan list
+    bool duplicate = false;
+    for (int j = 0; j < i; j++) {
+      if (WiFi.SSID(j) == ssid) {
+        duplicate = true;
+        break;
+      }
+    }
+    if (duplicate) continue;
+
+    // Pick the strongest RSSI among all access points broadcasting this SSID
+    int bestRssi = WiFi.RSSI(i);
+    bool isSecure = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
+    for (int k = i + 1; k < n; k++) {
+      if (WiFi.SSID(k) == ssid && WiFi.RSSI(k) > bestRssi) {
+        bestRssi = WiFi.RSSI(k);
+        isSecure = (WiFi.encryptionType(k) != WIFI_AUTH_OPEN);
+      }
+    }
+
+    if (!first) json += ",";
+    first = false;
+    uniqueCount++;
     json += "{";
-    json += "\"ssid\":\"" + jsonEscape(WiFi.SSID(i)) + "\",";
-    json += "\"rssi\":" + String(WiFi.RSSI(i)) + ",";
-    json += "\"secure\":" + String(WiFi.encryptionType(i) != WIFI_AUTH_OPEN ? "true" : "false");
+    json += "\"ssid\":\"" + jsonEscape(ssid) + "\",";
+    json += "\"rssi\":" + String(bestRssi) + ",";
+    json += "\"secure\":" + String(isSecure ? "true" : "false");
     json += "}";
   }
   json += "]";
   WiFi.scanDelete();
   cachedScanJson = json;
   scanCacheValid = true;
-  Serial.printf("Wi-Fi scan complete: %d networks found\n", max(0, n));
+  Serial.printf("Wi-Fi scan complete: %d unique networks found (%d total APs)\n", uniqueCount, max(0, n));
 }
 
 void startAccessPointMode() {
