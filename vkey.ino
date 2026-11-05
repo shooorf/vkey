@@ -513,21 +513,6 @@ String jsonEscape(const String& s) {
   return out;
 }
 
-void eraseAllAndReboot() {
-  if (bleDevice.isConnected()) {
-    if (capsLockActive) {
-      delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-      toggleCapsLock(true);
-    }
-    Keyboard.releaseAll();
-  }
-  Serial.println("\nErasing NVS and rebooting...");
-  delay(200);
-  nvs_flash_erase();
-  nvs_flash_init();
-  ESP.restart();
-}
-
 bool isUpperLetter(char c) {
   return (c >= 'A' && c <= 'Z');
 }
@@ -573,7 +558,7 @@ bool shouldEnableCapsLock(const String& text, int curIdx) {
   return false;
 }
 
-void toggleCapsLock(bool logToSerial = true) {
+void toggleCapsLock(bool logToSerial) {
   Keyboard.press(KEY_CAPS_LOCK);
   delay(random(keyPressMinMs, keyPressMaxMs + 1));
   Keyboard.releaseAll();
@@ -581,6 +566,21 @@ void toggleCapsLock(bool logToSerial = true) {
   if (logToSerial) {
     Serial.print(capsLockActive ? "[CAPS:ON]" : "[CAPS:OFF]");
   }
+}
+
+void eraseAllAndReboot() {
+  if (bleDevice.isConnected()) {
+    if (capsLockActive) {
+      delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+      toggleCapsLock(true);
+    }
+    Keyboard.releaseAll();
+  }
+  Serial.println("\nErasing NVS and rebooting...");
+  delay(200);
+  nvs_flash_erase();
+  nvs_flash_init();
+  ESP.restart();
 }
 
 void startPrintText(const String& text) {
