@@ -80,6 +80,7 @@ String myHostname = "vkey";
 String apPass = "";
 String savedSsid = "";
 String savedPass = "";
+String cachedScanJson = "[]";
 bool apMode = false;
 
 // BOOT button state
@@ -218,7 +219,7 @@ const char htmlPage[] PROGMEM = R"=====(
   <br><hr><br>
   <h3>Wi-Fi Settings</h3>
   <form id="wifiForm">
-    <button type="button" id="scanBtn" class="btn-sm" onclick="scanWifi()">Scan Wi-Fi Networks</button>
+    <button type="button" id="scanBtn" class="btn-sm" onclick="scanWifi(true)">Scan Wi-Fi Networks</button>
     <select id="ssidSelect" style="display:none;" onchange="if(this.value) document.getElementById('wifi_ssid').value=this.value;">
       <option value="">-- Select scanned network --</option>
     </select>
@@ -269,18 +270,19 @@ const char htmlPage[] PROGMEM = R"=====(
             document.getElementById('wifi_ssid').value = data.ssid;
           }
           if (data.ap_mode && !data.printing) {
-            scanWifi();
+            scanWifi(false);
           }
         }
       }).catch(() => {});
     }
 
-    function scanWifi() {
+    function scanWifi(refresh) {
       const scanBtn = document.getElementById('scanBtn');
       const select = document.getElementById('ssidSelect');
       scanBtn.disabled = true;
       scanBtn.textContent = 'Scanning...';
-      fetch('/scan').then(r => r.json()).then(list => {
+      const url = refresh ? '/scan?refresh=1' : '/scan';
+      fetch(url).then(r => r.json()).then(list => {
         select.innerHTML = '<option value="">-- Select scanned network --</option>';
         list.forEach(item => {
           const opt = document.createElement('option');
@@ -527,11 +529,37 @@ void handleBootButton() {
   }
 }
 
+void performWifiScan() {
+  Serial.println("Scanning Wi-Fi networks...");
+  int n = WiFi.scanNetworks();
+  String json = "[";
+  for (int i = 0; i < n; i++) {
+    if (i > 0) json += ",";
+    json += "{";
+    json += "\"ssid\":\"" + jsonEscape(WiFi.SSID(i)) + "\",";
+    json += "\"rssi\":" + String(WiFi.RSSI(i)) + ",";
+    json += "\"secure\":" + String(WiFi.encryptionType(i) != WIFI_AUTH_OPEN ? "true" : "false");
+    json += "}";
+  }
+  json += "]";
+  WiFi.scanDelete();
+  cachedScanJson = json;
+  Serial.printf("Wi-Fi scan complete: %d networks found\n", n);
+}
+
 void startAccessPointMode() {
   apMode = true;
   WiFi.setAutoReconnect(false);
   WiFi.disconnect(true, true);
-  WiFi.mode(WIFI_AP_STA);
+
+  // 1. Scan Wi-Fi networks in pure STA mode BEFORE turning on the Access Point
+  // so scanning and AP operation never overlap.
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  performWifiScan();
+
+  // 2. Now switch to pure AP mode and start the Access Point
+  WiFi.mode(WIFI_AP);
   WiFi.setSleep(false);
   WiFi.softAP(myHostname.c_str(), apPass.c_str());
 
@@ -700,19 +728,10 @@ void setup() {
   });
 
   server.on("/scan", HTTP_GET, []() {
-    int n = WiFi.scanNetworks();
-    String json = "[";
-    for (int i = 0; i < n; i++) {
-      if (i > 0) json += ",";
-      json += "{";
-      json += "\"ssid\":\"" + jsonEscape(WiFi.SSID(i)) + "\",";
-      json += "\"rssi\":" + String(WiFi.RSSI(i)) + ",";
-      json += "\"secure\":" + String(WiFi.encryptionType(i) != WIFI_AUTH_OPEN ? "true" : "false");
-      json += "}";
+    if (server.hasArg("refresh") || cachedScanJson == "[]") {
+      performWifiScan();
     }
-    json += "]";
-    WiFi.scanDelete();
-    server.send(200, "application/json", json);
+    server.send(200, "application/json", cachedScanJson);
   });
 
   server.on("/wifi", HTTP_POST, []() {
