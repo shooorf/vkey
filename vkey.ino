@@ -68,6 +68,9 @@ Usage:
 #endif
 #define BOOT_LONG_PRESS_MS 3000
 #define WIFI_CONNECT_TIMEOUT_MS 15000
+#define SERIAL_LOG_MAX_CHARS 256
+#define CAPS_LOOKAHEAD_WINDOW 16
+#define CAPS_MIN_UPPER_RUN 5
 
 WebServer server(80);
 DNSServer dnsServer;
@@ -87,6 +90,8 @@ unsigned long bootBtnPressTime = 0;
 String pendingText = "";
 int printIndex = 0;
 bool isPrinting = false;
+bool capsLockActive = false;
+int nextCapsCheckIndex = 0;
 unsigned long lastCharTime = 0;
 unsigned long currentDelay = 0;
 
@@ -414,6 +419,57 @@ void eraseAllAndReboot() {
   ESP.restart();
 }
 
+bool isUpperLetter(char c) {
+  return (c >= 'A' && c <= 'Z');
+}
+
+bool isLowerLetter(char c) {
+  return (c >= 'a' && c <= 'z');
+}
+
+bool isShiftedSymbol(char c) {
+  // Special characters that require Shift on a US English keyboard layout
+  const char* shifted = "~!@#$%^&*()_+{}|:\"<>?";
+  for (int i = 0; shifted[i] != '\0'; i++) {
+    if (c == shifted[i]) return true;
+  }
+  return false;
+}
+
+bool shouldEnableCapsLock(const String& text, int curIdx) {
+  if (curIdx < nextCapsCheckIndex) return false;
+
+  int endIdx = min((int)text.length(), curIdx + CAPS_LOOKAHEAD_WINDOW);
+  int upperCount = 0;
+
+  for (int i = curIdx; i < endIdx; i++) {
+    char ch = text[i];
+    if (isUpperLetter(ch)) {
+      upperCount++;
+      if (upperCount >= CAPS_MIN_UPPER_RUN) {
+        return true;
+      }
+    } else if (isLowerLetter(ch) || isShiftedSymbol(ch)) {
+      // Stopper reached before accumulating 5 uppercase letters; skip re-checking up to this index
+      nextCapsCheckIndex = i + 1;
+      return false;
+    }
+  }
+
+  nextCapsCheckIndex = (endIdx >= (int)text.length()) ? (int)text.length() : (curIdx + 1);
+  return false;
+}
+
+void toggleCapsLock(bool logToSerial = true) {
+  Keyboard.press(KEY_CAPS_LOCK);
+  delay(random(keyPressMinMs, keyPressMaxMs + 1));
+  Keyboard.releaseAll();
+  capsLockActive = !capsLockActive;
+  if (logToSerial) {
+    Serial.print(capsLockActive ? "[CAPS:ON]" : "[CAPS:OFF]");
+  }
+}
+
 void startPrintText(const String& text) {
   if (!bleDevice.isConnected() || isPrinting || text.length() == 0) {
     return;
@@ -421,9 +477,19 @@ void startPrintText(const String& text) {
   pendingText = text;
   printIndex = 0;
   isPrinting = true;
+  capsLockActive = false;
+  nextCapsCheckIndex = 0;
   currentDelay = random(keyDelayMinMs, keyDelayMaxMs + 1);
   lastCharTime = millis();
-  Serial.println("Print started");
+
+  Serial.printf("Print started (%u chars): ", (unsigned int)text.length());
+  if (text.length() > SERIAL_LOG_MAX_CHARS) {
+    Serial.print(text.substring(0, SERIAL_LOG_MAX_CHARS));
+    Serial.println("... [truncated]");
+  } else {
+    Serial.println(text);
+  }
+  Serial.print("Keys: ");
 }
 
 void handleBootButton() {
@@ -454,24 +520,11 @@ void handleBootButton() {
           infoStr = "Please connect via configured wifi network to http://" +
                     WiFi.localIP().toString();
         }
-        Serial.print("BOOT short press -> typing: ");
-        Serial.println(infoStr);
+        Serial.println("BOOT short press -> typing connection info");
         startPrintText(infoStr);
       }
     }
   }
-}
-
-bool needsShift(char c) {
-  // Uppercase letters
-  if (c >= 'A' && c <= 'Z') return true;
-  
-  // Special characters that require Shift on a US English keyboard layout
-  const char* shifted = "~!@#$%^&*()_+{}|:\"<>?";
-  for (int i = 0; shifted[i] != '\0'; i++) {
-    if (c == shifted[i]) return true;
-  }
-  return false;
 }
 
 void startAccessPointMode() {
@@ -618,10 +671,14 @@ void setup() {
   });
 
   server.on("/cancel", []() {
+    if (capsLockActive && bleDevice.isConnected()) {
+      toggleCapsLock(true);
+    }
+    capsLockActive = false;
     isPrinting = false;
     pendingText = String();
     server.send(200, "text/plain", "Cancelled");
-    Serial.println("Print cancelled");
+    Serial.println("\nPrint cancelled");
   });
 
   server.on("/status", []() {
@@ -784,23 +841,58 @@ void loop() {
   // Asynchronous (non-blocking) text typing
   if (isPrinting && bleDevice.isConnected()) {
     if (millis() - lastCharTime >= currentDelay) {
+      int curIdx = printIndex;
       char c = pendingText[printIndex];
       printIndex++;
+      bool logChar = (curIdx < SERIAL_LOG_MAX_CHARS);
+      if (curIdx == SERIAL_LOG_MAX_CHARS) {
+        Serial.print("... [truncated]");
+      }
 
       // Filter out non-ASCII UTF-8 characters (keep only ASCII 0-127)
       if ((unsigned char)c < 128) {
         // Ignore \r to prevent double line breaks
         if (c != '\r') {
-          Serial.print(c);
-          if (needsShift(c)) {
-            // Emulate human keystrokes for RDP compatibility:
-            Keyboard.press(KEY_LEFT_SHIFT);                     // 1. Press and hold Shift first
-            delay(random(keyDelayMinMs, keyDelayMaxMs + 1));    // 2. Delay between Shift and target key
-            Keyboard.press(c);                                  // 3. Press the target key
-            delay(random(keyPressMinMs, keyPressMaxMs + 1));    // 4. Hold target key down
-            Keyboard.releaseAll();                              // 5. Release all keys
+          if (isUpperLetter(c)) {
+            if (!capsLockActive && shouldEnableCapsLock(pendingText, curIdx)) {
+              toggleCapsLock(logChar);
+              delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+            }
+            if (capsLockActive) {
+              char lowerKey = c - 'A' + 'a';
+              if (logChar) Serial.print(lowerKey);
+              Keyboard.press(lowerKey);
+              delay(random(keyPressMinMs, keyPressMaxMs + 1));
+              Keyboard.releaseAll();
+            } else {
+              if (logChar) Serial.printf("[S+%c]", c);
+              Keyboard.press(KEY_LEFT_SHIFT);
+              delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+              Keyboard.press(c);
+              delay(random(keyPressMinMs, keyPressMaxMs + 1));
+              Keyboard.releaseAll();
+            }
+          } else if (isLowerLetter(c) || isShiftedSymbol(c)) {
+            if (capsLockActive) {
+              toggleCapsLock(logChar);
+              delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+            }
+            if (isShiftedSymbol(c)) {
+              if (logChar) Serial.printf("[S+%c]", c);
+              Keyboard.press(KEY_LEFT_SHIFT);
+              delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+              Keyboard.press(c);
+              delay(random(keyPressMinMs, keyPressMaxMs + 1));
+              Keyboard.releaseAll();
+            } else {
+              if (logChar) Serial.print(c);
+              Keyboard.press(c);
+              delay(random(keyPressMinMs, keyPressMaxMs + 1));
+              Keyboard.releaseAll();
+            }
           } else {
-            // Regular keys without Shift
+            // Neutral characters (digits, spaces, punctuation not requiring Shift)
+            if (logChar) Serial.print(c);
             Keyboard.press(c);
             delay(random(keyPressMinMs, keyPressMaxMs + 1));
             Keyboard.releaseAll();
@@ -811,6 +903,10 @@ void loop() {
       }
       
       if (printIndex >= pendingText.length()) {
+        if (capsLockActive) {
+          delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+          toggleCapsLock(true);
+        }
         isPrinting = false;
         pendingText = String();
         Serial.println("\nPrinting finished");
@@ -821,6 +917,7 @@ void loop() {
   // Abort typing if BLE disconnects mid-stream
   if (isPrinting && !bleDevice.isConnected()) {
     isPrinting = false;
+    capsLockActive = false;
     pendingText = String();
     Serial.println("\nBLE disconnected, print aborted");
   }

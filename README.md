@@ -12,6 +12,7 @@ It is designed for pasting text and scripts into machines where clipboard sharin
   * Paste text or scripts into the web UI and type them out on the paired host over BLE.
   * Uses raw `text/plain` HTTP payloads (no `urlencoded` size bloat or escaping issues) with explicit heap buffer reclamation (`String()`).
   * Non-blocking character-by-character typing with two configurable randomized timing ranges (saved in NVS): key press hold duration (`30–40 ms` default, how long each key is held down) and delay between keys (`60–80 ms` default, pause between characters as well as between pressing `Shift` and the target key) so RDP sessions never drop uppercase characters or shifted symbols.
+  * **Smart `Caps Lock` Optimization:** When more than 4 uppercase letters (`>= 5`) are detected within a 16-character lookahead window (before any lowercase letter or shifted symbol), the firmware toggles `KEY_CAPS_LOCK` on, types the uppercase run without pressing `Shift` on each letter, keeps `Caps Lock` active across neutral characters (digits, spaces, punctuation), and automatically turns `Caps Lock` off before the next lowercase letter, shifted symbol, cancellation, or end of text.
   * Real-time progress bar (`%` and character counter) and instant cancellation (`Cancel`).
 * **Configurable Non-Blocking Mouse Jiggler & Independent Mouse Scroller:**
   * **Mouse Jiggler:** Periodically shifts the mouse cursor by a small random offset (default `2–5 px` every `80–120 s`), waits `20–40 ms`, and returns the cursor to its exact starting position.
