@@ -90,6 +90,12 @@ bool isPrinting = false;
 unsigned long lastCharTime = 0;
 unsigned long currentDelay = 0;
 
+// Keyboard typing timing settings (ms)
+int keyPressMinMs = 30; // How long a key is held down
+int keyPressMaxMs = 40;
+int keyDelayMinMs = 60; // Delay between keys (including after pressing Shift)
+int keyDelayMaxMs = 80;
+
 // Mouse Jiggler settings
 bool jiggleEnabled = true;
 int jiggleIntervalMinSec = 80;
@@ -105,6 +111,33 @@ unsigned long nextJiggleDelay = 0;
 bool jiggleShifted = false;
 int currentJiggleX = 0;
 int currentJiggleY = 0;
+
+// Mouse Scroller settings (independent from Mouse Jiggler)
+bool scrollEnabled = false;
+int scrollIntervalMinSec = 120;
+int scrollIntervalMaxSec = 240;
+int scrollBurstMin = 3;
+int scrollBurstMax = 5;
+int scrollStepDelayMinMs = 60;
+int scrollStepDelayMaxMs = 80;
+int scrollStepMinTicks = 1;
+int scrollStepMaxTicks = 2;
+int scrollReturnMinSec = 2;
+int scrollReturnMaxSec = 5;
+
+// Mouse Scroller state machine variables
+enum ScrollState {
+  SCROLL_IDLE = 0,
+  SCROLL_BURST_OUT,
+  SCROLL_WAIT_RETURN,
+  SCROLL_BURST_BACK
+};
+ScrollState scrollState = SCROLL_IDLE;
+unsigned long lastScrollActionTime = 0;
+unsigned long nextScrollDelay = 0;
+int scrollDirection = 1;
+int scrollStepsRemaining = 0;
+int scrollAccumulatedTicks = 0;
 
 // Store HTML in Flash memory using PROGMEM and Raw String Literal (R"=====( ... )=====")
 const char htmlPage[] PROGMEM = R"=====(
@@ -138,6 +171,16 @@ const char htmlPage[] PROGMEM = R"=====(
   </form>
 
   <br><hr><br>
+  <h3>Keyboard Settings</h3>
+  <form id="keyboardForm">
+    Min Key Press Hold (ms): <input type="number" name="kb_prs_min" id="set_kb_prs_min" min="1" style="width:60px;">
+    Max Key Press Hold (ms): <input type="number" name="kb_prs_max" id="set_kb_prs_max" min="1" style="width:60px;"><br><br>
+    Min Delay Between Keys (ms): <input type="number" name="kb_dly_min" id="set_kb_dly_min" min="1" style="width:60px;">
+    Max Delay Between Keys (ms): <input type="number" name="kb_dly_max" id="set_kb_dly_max" min="1" style="width:60px;"><br><br>
+    <button type="submit" class="btn">Save Keyboard Settings</button>
+  </form>
+
+  <br><hr><br>
   <h3>Jiggler Settings</h3>
   <form id="settingsForm">
     <label><input type="checkbox" name="enabled" id="set_enabled"> Enable Jiggler</label><br><br>
@@ -147,7 +190,24 @@ const char htmlPage[] PROGMEM = R"=====(
     Max Shift (px): <input type="number" name="shift_max" id="set_shift_max" style="width:60px;"><br><br>
     Min Return (ms): <input type="number" name="ret_min" id="set_ret_min" style="width:60px;">
     Max Return (ms): <input type="number" name="ret_max" id="set_ret_max" style="width:60px;"><br><br>
-    <button type="submit" class="btn">Save Settings</button>
+    <button type="submit" class="btn">Save Jiggler Settings</button>
+  </form>
+
+  <br><hr><br>
+  <h3>Scroller Settings</h3>
+  <form id="scrollerForm">
+    <label><input type="checkbox" name="sc_enabled" id="set_sc_enabled"> Enable Random Scroller</label><br><br>
+    Min Interval (sec): <input type="number" name="sc_int_min" id="set_sc_int_min" style="width:60px;">
+    Max Interval (sec): <input type="number" name="sc_int_max" id="set_sc_int_max" style="width:60px;"><br><br>
+    Min Burst Steps: <input type="number" name="sc_cnt_min" id="set_sc_cnt_min" style="width:60px;">
+    Max Burst Steps: <input type="number" name="sc_cnt_max" id="set_sc_cnt_max" style="width:60px;"><br><br>
+    Min Step Delay (ms): <input type="number" name="sc_dly_min" id="set_sc_dly_min" style="width:60px;">
+    Max Step Delay (ms): <input type="number" name="sc_dly_max" id="set_sc_dly_max" style="width:60px;"><br><br>
+    Min Step (ticks, 1 &approx; 100px): <input type="number" name="sc_stp_min" id="set_sc_stp_min" min="1" max="127" style="width:60px;">
+    Max Step (ticks): <input type="number" name="sc_stp_max" id="set_sc_stp_max" min="1" max="127" style="width:60px;"><br><br>
+    Min Return Delay (sec): <input type="number" name="sc_ret_min" id="set_sc_ret_min" style="width:60px;">
+    Max Return Delay (sec): <input type="number" name="sc_ret_max" id="set_sc_ret_max" style="width:60px;"><br><br>
+    <button type="submit" class="btn">Save Scroller Settings</button>
   </form>
 
   <br><hr><br>
@@ -246,6 +306,11 @@ const char htmlPage[] PROGMEM = R"=====(
 
     function loadSettings() {
       fetch('/settings').then(r => r.json()).then(d => {
+        document.getElementById('set_kb_prs_min').value = d.kb_prs_min;
+        document.getElementById('set_kb_prs_max').value = d.kb_prs_max;
+        document.getElementById('set_kb_dly_min').value = d.kb_dly_min;
+        document.getElementById('set_kb_dly_max').value = d.kb_dly_max;
+
         document.getElementById('set_enabled').checked = d.enabled;
         document.getElementById('set_int_min').value = d.int_min;
         document.getElementById('set_int_max').value = d.int_max;
@@ -253,8 +318,27 @@ const char htmlPage[] PROGMEM = R"=====(
         document.getElementById('set_shift_max').value = d.shift_max;
         document.getElementById('set_ret_min').value = d.ret_min;
         document.getElementById('set_ret_max').value = d.ret_max;
+
+        document.getElementById('set_sc_enabled').checked = d.sc_enabled;
+        document.getElementById('set_sc_int_min').value = d.sc_int_min;
+        document.getElementById('set_sc_int_max').value = d.sc_int_max;
+        document.getElementById('set_sc_cnt_min').value = d.sc_cnt_min;
+        document.getElementById('set_sc_cnt_max').value = d.sc_cnt_max;
+        document.getElementById('set_sc_dly_min').value = d.sc_dly_min;
+        document.getElementById('set_sc_dly_max').value = d.sc_dly_max;
+        document.getElementById('set_sc_stp_min').value = d.sc_stp_min;
+        document.getElementById('set_sc_stp_max').value = d.sc_stp_max;
+        document.getElementById('set_sc_ret_min').value = d.sc_ret_min;
+        document.getElementById('set_sc_ret_max').value = d.sc_ret_max;
       });
     }
+
+    document.getElementById('keyboardForm').onsubmit = function(e) {
+      e.preventDefault();
+      let data = new URLSearchParams(new FormData(e.target));
+      fetch('/keyboard', { method: 'POST', body: data })
+        .then(() => alert('Keyboard settings saved!'));
+    };
 
     document.getElementById('settingsForm').onsubmit = function(e) {
       e.preventDefault();
@@ -263,7 +347,17 @@ const char htmlPage[] PROGMEM = R"=====(
       else data.set('enabled', 'true');
 
       fetch('/settings', { method: 'POST', body: data })
-        .then(() => alert('Settings saved successfully!'));
+        .then(() => alert('Jiggler settings saved!'));
+    };
+
+    document.getElementById('scrollerForm').onsubmit = function(e) {
+      e.preventDefault();
+      let data = new URLSearchParams(new FormData(e.target));
+      if (!document.getElementById('set_sc_enabled').checked) data.append('sc_enabled', 'false');
+      else data.set('sc_enabled', 'true');
+
+      fetch('/scroller', { method: 'POST', body: data })
+        .then(() => alert('Scroller settings saved!'));
     };
 
     document.getElementById('wifiForm').onsubmit = function(e) {
@@ -327,7 +421,7 @@ void startPrintText(const String& text) {
   pendingText = text;
   printIndex = 0;
   isPrinting = true;
-  currentDelay = random(80, 130);
+  currentDelay = random(keyDelayMinMs, keyDelayMaxMs + 1);
   lastCharTime = millis();
   Serial.println("Print started");
 }
@@ -422,6 +516,11 @@ void setup() {
 
   // Initialize settings from NVS (Preferences)
   preferences.begin("jiggler", false);
+  keyPressMinMs = preferences.getInt("kb_prs_min", 30);
+  keyPressMaxMs = preferences.getInt("kb_prs_max", 40);
+  keyDelayMinMs = preferences.getInt("kb_dly_min", 60);
+  keyDelayMaxMs = preferences.getInt("kb_dly_max", 80);
+
   jiggleEnabled = preferences.getBool("enabled", true);
   jiggleIntervalMinSec = preferences.getInt("int_min", 80);
   jiggleIntervalMaxSec = preferences.getInt("int_max", 120);
@@ -429,6 +528,18 @@ void setup() {
   jiggleShiftMaxPx = preferences.getInt("shift_max", 5);
   jiggleReturnMinMs = preferences.getInt("ret_min", 20);
   jiggleReturnMaxMs = preferences.getInt("ret_max", 40);
+
+  scrollEnabled = preferences.getBool("sc_enabled", false);
+  scrollIntervalMinSec = preferences.getInt("sc_int_min", 120);
+  scrollIntervalMaxSec = preferences.getInt("sc_int_max", 240);
+  scrollBurstMin = preferences.getInt("sc_cnt_min", 3);
+  scrollBurstMax = preferences.getInt("sc_cnt_max", 5);
+  scrollStepDelayMinMs = preferences.getInt("sc_dly_min", 60);
+  scrollStepDelayMaxMs = preferences.getInt("sc_dly_max", 80);
+  scrollStepMinTicks = preferences.getInt("sc_stp_min", 1);
+  scrollStepMaxTicks = preferences.getInt("sc_stp_max", 2);
+  scrollReturnMinSec = preferences.getInt("sc_ret_min", 2);
+  scrollReturnMaxSec = preferences.getInt("sc_ret_max", 5);
 
   savedSsid = preferences.getString("wifi_ssid", "");
   savedPass = preferences.getString("wifi_pass", "");
@@ -442,6 +553,9 @@ void setup() {
 
   nextJiggleDelay = random(jiggleIntervalMinSec, jiggleIntervalMaxSec + 1) * 1000UL;
   lastJiggleActionTime = millis();
+
+  nextScrollDelay = random(scrollIntervalMinSec, scrollIntervalMaxSec + 1) * 1000UL;
+  lastScrollActionTime = millis();
 
   // Connect to saved Wi-Fi or fall back to Access Point setup mode
   if (savedSsid.length() > 0) {
@@ -562,15 +676,38 @@ void setup() {
 
   server.on("/settings", HTTP_GET, []() {
     String json = "{";
+    json += "\"kb_prs_min\":" + String(keyPressMinMs) + ",";
+    json += "\"kb_prs_max\":" + String(keyPressMaxMs) + ",";
+    json += "\"kb_dly_min\":" + String(keyDelayMinMs) + ",";
+    json += "\"kb_dly_max\":" + String(keyDelayMaxMs) + ",";
     json += "\"enabled\":" + String(jiggleEnabled ? "true" : "false") + ",";
     json += "\"int_min\":" + String(jiggleIntervalMinSec) + ",";
     json += "\"int_max\":" + String(jiggleIntervalMaxSec) + ",";
     json += "\"shift_min\":" + String(jiggleShiftMinPx) + ",";
     json += "\"shift_max\":" + String(jiggleShiftMaxPx) + ",";
     json += "\"ret_min\":" + String(jiggleReturnMinMs) + ",";
-    json += "\"ret_max\":" + String(jiggleReturnMaxMs);
+    json += "\"ret_max\":" + String(jiggleReturnMaxMs) + ",";
+    json += "\"sc_enabled\":" + String(scrollEnabled ? "true" : "false") + ",";
+    json += "\"sc_int_min\":" + String(scrollIntervalMinSec) + ",";
+    json += "\"sc_int_max\":" + String(scrollIntervalMaxSec) + ",";
+    json += "\"sc_cnt_min\":" + String(scrollBurstMin) + ",";
+    json += "\"sc_cnt_max\":" + String(scrollBurstMax) + ",";
+    json += "\"sc_dly_min\":" + String(scrollStepDelayMinMs) + ",";
+    json += "\"sc_dly_max\":" + String(scrollStepDelayMaxMs) + ",";
+    json += "\"sc_stp_min\":" + String(scrollStepMinTicks) + ",";
+    json += "\"sc_stp_max\":" + String(scrollStepMaxTicks) + ",";
+    json += "\"sc_ret_min\":" + String(scrollReturnMinSec) + ",";
+    json += "\"sc_ret_max\":" + String(scrollReturnMaxSec);
     json += "}";
     server.send(200, "application/json", json);
+  });
+
+  server.on("/keyboard", HTTP_POST, []() {
+    if (server.hasArg("kb_prs_min")) { keyPressMinMs = max(1, (int)server.arg("kb_prs_min").toInt()); preferences.putInt("kb_prs_min", keyPressMinMs); }
+    if (server.hasArg("kb_prs_max")) { keyPressMaxMs = max(keyPressMinMs, (int)server.arg("kb_prs_max").toInt()); preferences.putInt("kb_prs_max", keyPressMaxMs); }
+    if (server.hasArg("kb_dly_min")) { keyDelayMinMs = max(1, (int)server.arg("kb_dly_min").toInt()); preferences.putInt("kb_dly_min", keyDelayMinMs); }
+    if (server.hasArg("kb_dly_max")) { keyDelayMaxMs = max(keyDelayMinMs, (int)server.arg("kb_dly_max").toInt()); preferences.putInt("kb_dly_max", keyDelayMaxMs); }
+    server.send(200, "text/plain", "OK");
   });
 
   server.on("/settings", HTTP_POST, []() {
@@ -590,6 +727,31 @@ void setup() {
     nextJiggleDelay = random(jiggleIntervalMinSec, jiggleIntervalMaxSec + 1) * 1000UL;
     lastJiggleActionTime = millis();
     
+    server.send(200, "text/plain", "OK");
+  });
+
+  server.on("/scroller", HTTP_POST, []() {
+    if (server.hasArg("sc_enabled")) {
+      scrollEnabled = (server.arg("sc_enabled") == "true" || server.arg("sc_enabled") == "on");
+      preferences.putBool("sc_enabled", scrollEnabled);
+    }
+    if (server.hasArg("sc_int_min")) { scrollIntervalMinSec = max(1, (int)server.arg("sc_int_min").toInt()); preferences.putInt("sc_int_min", scrollIntervalMinSec); }
+    if (server.hasArg("sc_int_max")) { scrollIntervalMaxSec = max(scrollIntervalMinSec, (int)server.arg("sc_int_max").toInt()); preferences.putInt("sc_int_max", scrollIntervalMaxSec); }
+    if (server.hasArg("sc_cnt_min")) { scrollBurstMin = max(1, (int)server.arg("sc_cnt_min").toInt()); preferences.putInt("sc_cnt_min", scrollBurstMin); }
+    if (server.hasArg("sc_cnt_max")) { scrollBurstMax = max(scrollBurstMin, (int)server.arg("sc_cnt_max").toInt()); preferences.putInt("sc_cnt_max", scrollBurstMax); }
+    if (server.hasArg("sc_dly_min")) { scrollStepDelayMinMs = max(10, (int)server.arg("sc_dly_min").toInt()); preferences.putInt("sc_dly_min", scrollStepDelayMinMs); }
+    if (server.hasArg("sc_dly_max")) { scrollStepDelayMaxMs = max(scrollStepDelayMinMs, (int)server.arg("sc_dly_max").toInt()); preferences.putInt("sc_dly_max", scrollStepDelayMaxMs); }
+    if (server.hasArg("sc_stp_min")) { scrollStepMinTicks = constrain((int)server.arg("sc_stp_min").toInt(), 1, 127); preferences.putInt("sc_stp_min", scrollStepMinTicks); }
+    if (server.hasArg("sc_stp_max")) { scrollStepMaxTicks = constrain((int)server.arg("sc_stp_max").toInt(), scrollStepMinTicks, 127); preferences.putInt("sc_stp_max", scrollStepMaxTicks); }
+    if (server.hasArg("sc_ret_min")) { scrollReturnMinSec = max(1, (int)server.arg("sc_ret_min").toInt()); preferences.putInt("sc_ret_min", scrollReturnMinSec); }
+    if (server.hasArg("sc_ret_max")) { scrollReturnMaxSec = max(scrollReturnMinSec, (int)server.arg("sc_ret_max").toInt()); preferences.putInt("sc_ret_max", scrollReturnMaxSec); }
+
+    // Reset scroller state machine
+    scrollState = SCROLL_IDLE;
+    scrollAccumulatedTicks = 0;
+    nextScrollDelay = random(scrollIntervalMinSec, scrollIntervalMaxSec + 1) * 1000UL;
+    lastScrollActionTime = millis();
+
     server.send(200, "text/plain", "OK");
   });
 
@@ -632,19 +794,19 @@ void loop() {
           Serial.print(c);
           if (needsShift(c)) {
             // Emulate human keystrokes for RDP compatibility:
-            Keyboard.press(KEY_LEFT_SHIFT); // 1. Press and hold Shift first
-            delay(random(60, 80));          // 2. Wait for RDP to register Shift state
-            Keyboard.press(c);              // 3. Press the target key
-            delay(random(60, 80));          // 4. Hold keys down
-            Keyboard.releaseAll();          // 5. Release all keys
+            Keyboard.press(KEY_LEFT_SHIFT);                     // 1. Press and hold Shift first
+            delay(random(keyDelayMinMs, keyDelayMaxMs + 1));    // 2. Delay between Shift and target key
+            Keyboard.press(c);                                  // 3. Press the target key
+            delay(random(keyPressMinMs, keyPressMaxMs + 1));    // 4. Hold target key down
+            Keyboard.releaseAll();                              // 5. Release all keys
           } else {
             // Regular keys without Shift
             Keyboard.press(c);
-            delay(random(30, 40));
+            delay(random(keyPressMinMs, keyPressMaxMs + 1));
             Keyboard.releaseAll();
           }
           lastCharTime = millis();
-          currentDelay = random(60, 80);
+          currentDelay = random(keyDelayMinMs, keyDelayMaxMs + 1);
         }
       }
       
@@ -686,6 +848,71 @@ void loop() {
         // Set interval until next random movement
         nextJiggleDelay = random(jiggleIntervalMinSec, jiggleIntervalMaxSec + 1) * 1000UL;
         lastJiggleActionTime = currentMillis;
+      }
+    }
+  }
+
+  // Reset scroller state if BLE disconnects mid-cycle
+  if (!bleDevice.isConnected() && scrollState != SCROLL_IDLE) {
+    scrollState = SCROLL_IDLE;
+    scrollAccumulatedTicks = 0;
+  }
+
+  // Independent Non-blocking Mouse Scroller (paused while actively typing text, except finishing an active cycle)
+  if (scrollEnabled && bleDevice.isConnected() && (!isPrinting || scrollState != SCROLL_IDLE)) {
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastScrollActionTime >= nextScrollDelay) {
+      switch (scrollState) {
+        case SCROLL_IDLE: {
+          scrollDirection = (random(2) == 0) ? 1 : -1;
+          scrollStepsRemaining = random(scrollBurstMin, scrollBurstMax + 1);
+          scrollAccumulatedTicks = 0;
+          scrollState = SCROLL_BURST_OUT;
+          nextScrollDelay = 0;
+          lastScrollActionTime = currentMillis;
+          break;
+        }
+
+        case SCROLL_BURST_OUT: {
+          int ticks = constrain((int)random(scrollStepMinTicks, scrollStepMaxTicks + 1), 1, 127);
+          Mouse.move(0, 0, (signed char)(ticks * scrollDirection));
+          scrollAccumulatedTicks += ticks;
+          scrollStepsRemaining--;
+          lastScrollActionTime = currentMillis;
+
+          if (scrollStepsRemaining > 0) {
+            nextScrollDelay = random(scrollStepDelayMinMs, scrollStepDelayMaxMs + 1);
+          } else {
+            scrollState = SCROLL_WAIT_RETURN;
+            nextScrollDelay = random(scrollReturnMinSec * 1000UL, scrollReturnMaxSec * 1000UL + 1);
+          }
+          break;
+        }
+
+        case SCROLL_WAIT_RETURN: {
+          scrollState = SCROLL_BURST_BACK;
+          nextScrollDelay = 0;
+          lastScrollActionTime = currentMillis;
+          break;
+        }
+
+        case SCROLL_BURST_BACK: {
+          int ticks = constrain((int)random(scrollStepMinTicks, scrollStepMaxTicks + 1), 1, 127);
+          if (ticks > scrollAccumulatedTicks) {
+            ticks = scrollAccumulatedTicks;
+          }
+          Mouse.move(0, 0, (signed char)(-ticks * scrollDirection));
+          scrollAccumulatedTicks -= ticks;
+          lastScrollActionTime = currentMillis;
+
+          if (scrollAccumulatedTicks > 0) {
+            nextScrollDelay = random(scrollStepDelayMinMs, scrollStepDelayMaxMs + 1);
+          } else {
+            scrollState = SCROLL_IDLE;
+            nextScrollDelay = random(scrollIntervalMinSec, scrollIntervalMaxSec + 1) * 1000UL;
+          }
+          break;
+        }
       }
     }
   }

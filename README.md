@@ -11,12 +11,13 @@ It is designed for pasting text and scripts into machines where clipboard sharin
 * **Remote Text & Script Typing (with RDP Compatibility):**
   * Paste text or scripts into the web UI and type them out on the paired host over BLE.
   * Uses raw `text/plain` HTTP payloads (no `urlencoded` size bloat or escaping issues) with explicit heap buffer reclamation (`String()`).
-  * Non-blocking character-by-character typing with randomized human-like keystroke timing (`60–80 ms` intervals) and dedicated `Shift` modifier delays (`60–80 ms` hold before and after key press) so RDP sessions never drop uppercase characters or shifted symbols.
+  * Non-blocking character-by-character typing with two configurable randomized timing ranges (saved in NVS): key press hold duration (`30–40 ms` default, how long each key is held down) and delay between keys (`60–80 ms` default, pause between characters as well as between pressing `Shift` and the target key) so RDP sessions never drop uppercase characters or shifted symbols.
   * Real-time progress bar (`%` and character counter) and instant cancellation (`Cancel`).
-* **Configurable Non-Blocking Mouse Jiggler:**
-  * Periodically shifts the mouse cursor by a small random offset (default `2–5 px` every `80–120 s`), waits `20–40 ms`, and returns the cursor to its exact starting position.
-  * Automatically pauses new cursor shifts while text typing is in progress.
-  * All parameters are configurable in the web UI and persisted in NVS flash (`Preferences`).
+* **Configurable Non-Blocking Mouse Jiggler & Independent Mouse Scroller:**
+  * **Mouse Jiggler:** Periodically shifts the mouse cursor by a small random offset (default `2–5 px` every `80–120 s`), waits `20–40 ms`, and returns the cursor to its exact starting position.
+  * **Mouse Scroller (Disabled by default):** Independently simulates realistic human wheel scrolling bursts (default `3–5` steps in one direction with `60–80 ms` between steps, `1–2` wheel ticks ≈ `100–200 px` per step), waits `2–5 s`, and smoothly scrolls back by the exact accumulated amount to return the page to its original position.
+  * Automatically pauses new movements/scrolls while text typing is in progress.
+  * All parameters for both Jiggler and Scroller are configurable in the web UI and persisted in NVS flash (`Preferences`).
 * **Secure Zero-Touch Wi-Fi Provisioning (SoftAP + Captive Portal):**
   * No Wi-Fi credentials are hardcoded in the firmware.
   * Unique per-device hostname and Access Point SSID based on the chip's MAC address: `vkeyxxxx` (last 4 hex digits of MAC).
@@ -68,11 +69,23 @@ It is designed for pasting text and scripts into machines where clipboard sharin
 * **Board:** `ESP32-C3 Super Mini` (or any ESP32 / ESP32-S3 / ESP32-C6 board with BLE support)
 * **Arduino IDE:** `2.3.x`
 * **ESP32 Arduino Core:** `esp32 by Espressif Systems` version **`3.3.8`** (Board Manager URL: `https://espressif.github.io/arduino-esp32/package_esp32_index.json`)
-* **Arduino IDE Tools Menu Settings:**
-  * **Board:** `ESP32C3 Dev Module`
-  * **Partition Scheme:** `Huge App (3MB No OTA/1MB SPIFFS)`
-  * **USB CDC On Boot:** `Enabled`
-  * **Flash Mode:** `DIO`
+
+#### Required Arduino IDE `Tools` Menu Configuration
+Make sure to change the 3 highlighted settings from their defaults before compiling and uploading:
+
+| Setting | Required Value | Why It Matters |
+| :--- | :--- | :--- |
+| **Board** | `"ESP32C3 Dev Module"` | Target microcontroller profile |
+| **USB CDC On Boot** | **`"Enabled"`** *(default is Disabled)* | **Required:** ESP32-C3 Super Mini uses native USB Serial/JTAG (`GPIO 18`/`19`) with no external UART chip. Without this, `Serial Monitor` will not work and subsequent uploads may fail to auto-reset. |
+| **Flash Mode** | **`"DIO"`** *(default is QIO)* | **Required:** Most ESP32-C3 Super Mini boards fail to boot (infinite bootloop) if flashed in `QIO` mode. |
+| **Partition Scheme** | **`"Huge APP (3MB No OTA/1MB SPIFFS)"`** | **Required:** The combined Wi-Fi + WebServer + DNS + mDNS + NimBLE stack exceeds the default `1.2MB` app partition limit. |
+| **CPU Frequency** | `"160MHz (WiFi)"` | Default |
+| **Flash Frequency** | `"80MHz"` | Default |
+| **Flash Size** | `"4MB (32Mb)"` | Default |
+| **Upload Speed** | `"921600"` | Default |
+
+> **Tip if the board is not detected or fails to upload on first flash:**  
+> Hold down the **`BOOT`** button (`GPIO 9`), press and release the **`RST`** button (or plug in the USB cable while holding `BOOT`), then release **`BOOT`** to force the ESP32-C3 into ROM bootloader download mode. After flashing once with `USB CDC On Boot: "Enabled"`, future uploads will reset automatically.
 
 ### Dependencies
 1. **`NimBLE-Arduino`** by `h2zero` (version **`2.5.0`**) — install directly from the Arduino IDE Library Manager.
