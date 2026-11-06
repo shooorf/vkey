@@ -13,7 +13,9 @@ It is designed for pasting text and scripts into machines where clipboard sharin
   * Uses raw `text/plain` HTTP payloads (no `urlencoded` size bloat or escaping issues) with explicit heap buffer reclamation (`String()`).
   * Non-blocking character-by-character typing with two configurable randomized timing ranges (saved in NVS): key press hold duration (`30–40 ms` default, how long each key is held down) and delay between keys (`60–80 ms` default, pause between characters as well as between pressing `Shift` and the target key) so RDP sessions never drop uppercase characters or shifted symbols.
   * **Smart `Caps Lock` Optimization:** When more than 4 uppercase letters (`>= 5`) are detected within a 16-character lookahead window (before any lowercase letter or shifted symbol), the firmware toggles `KEY_CAPS_LOCK` on, types the uppercase run without pressing `Shift` on each letter, keeps `Caps Lock` active across neutral characters (digits, spaces, punctuation), and automatically turns `Caps Lock` off before the next lowercase letter, shifted symbol, cancellation, or end of text.
-  * **Strict Printable ASCII Whitelist:** Only printable ASCII characters (`32..126`), newline (`\n`), and tab (`\t`) are allowed to be typed (`isAllowedPrintChar()`), filtering out all control codes (`0..31` and `127`, such as `Backspace 0x08` or `Escape 0x1B`).
+  * **Russian Cyrillic Support (`Alt+Shift` Auto-Switching) & Strict Whitelist:**
+    * Supports both printable ASCII (`32..126`, `\n`, `\t`) and Russian Cyrillic letters (`А..Я`, `а..я`, `Ё`, `ё`) via [`decodeNextPrintToken()`](file:///c:/blecombo_test/helpers.h#L102-L162). All other characters, control codes (`0..31` and `127`, such as `Backspace 0x08` or `Escape 0x1B`), and malformed/overlong UTF-8 sequences are strictly filtered out.
+    * Assumes the host starts on the **US English** layout and automatically toggles the host keyboard layout via `Alt + Shift` ([`toggleHostLayout()`](file:///c:/blecombo_test/vkey.ino#L179-L198)) when switching between Cyrillic letters and English letters/punctuation (layout-neutral characters like spaces, newlines, tabs, digits `0..9`, and `- = ! % * ( ) _ +` do not trigger unnecessary layout switches). Always restores the host back to the `EN` layout upon completion or cancellation.
   * Real-time progress bar (`%` and character counter) and instant cancellation (`Cancel`).
 * **Configurable Non-Blocking Mouse Jiggler & Independent Mouse Scroller:**
   * **Mouse Jiggler:** Periodically shifts the mouse cursor by a small random offset (default `2–5 px` every `80–120 s`), waits `20–40 ms`, and returns the cursor to its exact starting position.
@@ -65,7 +67,7 @@ It is designed for pasting text and scripts into machines where clipboard sharin
 ### 2. Daily Operation
 * Once connected to your home router, open **`http://vkey.local`** in your browser (or use the IP address shown in your router's DHCP leases for `vkeyxxxx` — you can also short-press `BOOT` anytime to type out the new local IP).
 * **Typing Text / Scripts:**
-  * Make sure the target machine's active keyboard layout is **English (US)** and the cursor is focused in a plain text input field (avoid smart auto-closing/auto-indenting code editors like VS Code or Jupyter when typing raw code).
+  * Make sure the target machine's active keyboard layout is **English (US)** before clicking **Print** (if Russian Cyrillic text is used, the host must be configured to switch between English and Russian via `Alt + Shift`) and the cursor is focused in a plain text input field (avoid smart auto-closing/auto-indenting code editors like VS Code or Jupyter when typing raw code).
   * Paste your text into the text area and click **Print**.
 * **Changing Wi-Fi Networks:**
   * Click **Wi-Fi & Network Settings →** (`/wifi`) at the top of the main page to view detailed network parameters or connect to a different Wi-Fi network.

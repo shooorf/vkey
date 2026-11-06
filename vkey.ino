@@ -42,7 +42,7 @@ Usage:
   - Long press (hold for 3 seconds after power-on) — erases all NVS settings (Wi-Fi credentials, Keyboard/Jiggler/Scroller settings, BLE bonds) and reboots.
     (Note: Do not hold BOOT while plugging in USB power, as GPIO 9 is the ESP32-C3 hardware bootloader strapping pin.)
 * Properly supports RDP sessions.
-* Target machine must use the US English keyboard layout with focus in a plain text input field (non-ASCII characters and smart auto-closing editors like VS Code or Jupyter are not supported).
+* Target machine must start on the US English keyboard layout (with focus in a plain text input field); Russian Cyrillic letters (А..Я, а..я, Ё, ё) are supported by automatically toggling the host layout via Alt+Shift.
 * For debugging: connect via USB cable to a PC with Arduino IDE, select the board and COM port, and open Serial Monitor.
 
 */
@@ -102,6 +102,7 @@ String pendingText = "";
 int printIndex = 0;
 bool isPrinting = false;
 bool capsLockActive = false;
+bool ruLayoutActive = false;
 int nextCapsCheckIndex = 0;
 unsigned long lastCharTime = 0;
 unsigned long currentDelay = 0;
@@ -175,11 +176,36 @@ void toggleCapsLock(bool logToSerial) {
 #endif
 }
 
+void toggleHostLayout(bool logToSerial) {
+  if (capsLockActive) {
+    toggleCapsLock(logToSerial);
+    delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+  }
+  Keyboard.press(KEY_LEFT_ALT);
+  delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+  Keyboard.press(KEY_LEFT_SHIFT);
+  delay(random(keyPressMinMs, keyPressMaxMs + 1));
+  Keyboard.releaseAll();
+  ruLayoutActive = !ruLayoutActive;
+#if DEBUG_LOG_KEYS
+  if (logToSerial) {
+    Serial.print(ruLayoutActive ? "[LAYOUT:RU]" : "[LAYOUT:EN]");
+  }
+#else
+  (void)logToSerial;
+#endif
+  delay(150);
+}
+
 void eraseAllAndReboot() {
   if (bleDevice.isConnected()) {
     if (capsLockActive) {
       delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
       toggleCapsLock(true);
+    }
+    if (ruLayoutActive) {
+      delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+      toggleHostLayout(true);
     }
     Keyboard.releaseAll();
   }
@@ -206,6 +232,7 @@ void startPrintText(const String& text) {
   printIndex = 0;
   isPrinting = true;
   capsLockActive = false;
+  ruLayoutActive = false;
   nextCapsCheckIndex = 0;
   currentDelay = random(keyDelayMinMs, keyDelayMaxMs + 1);
   lastCharTime = millis();
@@ -542,11 +569,18 @@ void setup() {
 
   server.on("/cancel", HTTP_POST, []() {
     if (!checkAuth()) return;
-    if (capsLockActive && bleDevice.isConnected()) {
-      delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-      toggleCapsLock(true);
+    if (bleDevice.isConnected()) {
+      if (capsLockActive) {
+        delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+        toggleCapsLock(true);
+      }
+      if (ruLayoutActive) {
+        delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+        toggleHostLayout(true);
+      }
     }
     capsLockActive = false;
+    ruLayoutActive = false;
     isPrinting = false;
     pendingText = String();
     server.send(200, "text/plain", "Cancelled");
@@ -616,6 +650,10 @@ void setup() {
       if (capsLockActive) {
         delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
         toggleCapsLock(true);
+      }
+      if (ruLayoutActive) {
+        delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+        toggleHostLayout(true);
       }
       Keyboard.releaseAll();
     }
@@ -782,8 +820,10 @@ void loop() {
   if (isPrinting && bleConnected) {
     if (millis() - lastCharTime >= currentDelay) {
       int curIdx = printIndex;
-      char c = pendingText[printIndex];
-      printIndex++;
+      char c = 0;
+      bool isCyrillic = false;
+      bool cyrillicUpper = false;
+      bool validToken = decodeNextPrintToken(pendingText, printIndex, c, isCyrillic, cyrillicUpper);
       bool logChar = (DEBUG_LOG_KEYS && curIdx < SERIAL_LOG_MAX_CHARS);
 #if DEBUG_LOG_KEYS
       if (curIdx == SERIAL_LOG_MAX_CHARS) {
@@ -791,51 +831,73 @@ void loop() {
       }
 #endif
 
-      // Strict ASCII whitelist: only printable ASCII (32..126), newline (\n), and tab (\t)
-      if (isAllowedPrintChar(c)) {
-        if (isUpperLetter(c)) {
-          if (!capsLockActive && shouldEnableCapsLock(pendingText, curIdx, nextCapsCheckIndex)) {
-            toggleCapsLock(logChar);
-            delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+      // Strict whitelist: only printable ASCII (32..126, \n, \t) and Russian Cyrillic letters (А..Я, а..я, Ё, ё)
+      if (validToken) {
+        if (isCyrillic) {
+          if (!ruLayoutActive) {
+            toggleHostLayout(logChar);
           }
-          if (capsLockActive) {
-            char lowerKey = c - 'A' + 'a';
-            if (logChar) Serial.print(lowerKey);
-            Keyboard.press(lowerKey);
-            delay(random(keyPressMinMs, keyPressMaxMs + 1));
-            Keyboard.releaseAll();
-          } else {
-            if (logChar) Serial.printf("[S+%c]", c);
-            Keyboard.press(KEY_LEFT_SHIFT);
-            delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-            Keyboard.press(c);
-            delay(random(keyPressMinMs, keyPressMaxMs + 1));
-            Keyboard.releaseAll();
-          }
-        } else if (isLowerLetter(c) || isShiftedSymbol(c)) {
-          if (capsLockActive) {
-            toggleCapsLock(logChar);
-            delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-          }
-          if (isShiftedSymbol(c)) {
-            if (logChar) Serial.printf("[S+%c]", c);
+          if (cyrillicUpper) {
+            if (logChar) Serial.printf("[RU:S+%c]", c);
             Keyboard.press(KEY_LEFT_SHIFT);
             delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
             Keyboard.press(c);
             delay(random(keyPressMinMs, keyPressMaxMs + 1));
             Keyboard.releaseAll();
           } else {
-            if (logChar) Serial.print(c);
+            if (logChar) Serial.printf("[RU:%c]", c);
             Keyboard.press(c);
             delay(random(keyPressMinMs, keyPressMaxMs + 1));
             Keyboard.releaseAll();
           }
         } else {
-          // Neutral characters (digits, spaces, punctuation not requiring Shift)
-          if (logChar) Serial.print(c);
-          Keyboard.press(c);
-          delay(random(keyPressMinMs, keyPressMaxMs + 1));
-          Keyboard.releaseAll();
+          if (ruLayoutActive && !isLayoutNeutralChar(c)) {
+            toggleHostLayout(logChar);
+          }
+          if (isUpperLetter(c)) {
+            if (!capsLockActive && shouldEnableCapsLock(pendingText, curIdx, nextCapsCheckIndex)) {
+              toggleCapsLock(logChar);
+              delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+            }
+            if (capsLockActive) {
+              char lowerKey = c - 'A' + 'a';
+              if (logChar) Serial.print(lowerKey);
+              Keyboard.press(lowerKey);
+              delay(random(keyPressMinMs, keyPressMaxMs + 1));
+              Keyboard.releaseAll();
+            } else {
+              if (logChar) Serial.printf("[S+%c]", c);
+              Keyboard.press(KEY_LEFT_SHIFT);
+              delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+              Keyboard.press(c);
+              delay(random(keyPressMinMs, keyPressMaxMs + 1));
+              Keyboard.releaseAll();
+            }
+          } else if (isLowerLetter(c) || isShiftedSymbol(c)) {
+            if (capsLockActive) {
+              toggleCapsLock(logChar);
+              delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+            }
+            if (isShiftedSymbol(c)) {
+              if (logChar) Serial.printf("[S+%c]", c);
+              Keyboard.press(KEY_LEFT_SHIFT);
+              delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+              Keyboard.press(c);
+              delay(random(keyPressMinMs, keyPressMaxMs + 1));
+              Keyboard.releaseAll();
+            } else {
+              if (logChar) Serial.print(c);
+              Keyboard.press(c);
+              delay(random(keyPressMinMs, keyPressMaxMs + 1));
+              Keyboard.releaseAll();
+            }
+          } else {
+            // Neutral characters (digits, spaces, punctuation not requiring Shift)
+            if (logChar) Serial.print(c);
+            Keyboard.press(c);
+            delay(random(keyPressMinMs, keyPressMaxMs + 1));
+            Keyboard.releaseAll();
+          }
         }
         lastCharTime = millis();
         currentDelay = random(keyDelayMinMs, keyDelayMaxMs + 1);
@@ -845,6 +907,10 @@ void loop() {
         if (capsLockActive) {
           delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
           toggleCapsLock(true);
+        }
+        if (ruLayoutActive) {
+          delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+          toggleHostLayout(true);
         }
         isPrinting = false;
         pendingText = String();
@@ -857,6 +923,7 @@ void loop() {
   if (isPrinting && !bleDevice.isConnected()) {
     isPrinting = false;
     capsLockActive = false;
+    ruLayoutActive = false;
     pendingText = String();
     Serial.println("\nBLE disconnected, print aborted");
   }
