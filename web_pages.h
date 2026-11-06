@@ -37,7 +37,7 @@ const char htmlPage[] PROGMEM = R"=====(
   <form id="typeForm" action="/type" method="POST">
     <textarea name="payload" id="payloadText" rows="10" placeholder="Enter text..."></textarea><br><br>
     <input type="submit" id="printBtn" class="btn" value="Print">
-    <button type="button" id="cancelBtn" class="btn" onclick="fetch('/cancel').then(()=>updateStatus())">Cancel</button>
+    <button type="button" id="cancelBtn" class="btn" onclick="fetch('/cancel', { method: 'POST' }).then(()=>updateStatus())">Cancel</button>
   </form>
 
   <hr>
@@ -143,7 +143,7 @@ const char htmlPage[] PROGMEM = R"=====(
   <button type="button" id="sleepStopBtn" class="btn" onclick="setSleepTimer('stop')" disabled>Disable Timer</button>
 
   <hr>
-  <button type="button" class="btn" style="background-color: #ffcccc;" onclick="if(confirm('Erase all settings (Wi-Fi, Jiggler, BLE bonds) and Reboot?')) fetch('/reset_nvs');">Reset NVS (Full Reset)</button>
+  <button type="button" class="btn" style="background-color: #ffcccc;" onclick="if(confirm('Erase all settings (Wi-Fi, Jiggler, BLE bonds) and Reboot?')) fetch('/reset_nvs', { method: 'POST' });">Reset NVS (Full Reset)</button>
 
   <script>
     const statusDiv = document.getElementById('status');
@@ -392,7 +392,7 @@ const char wifiPage[] PROGMEM = R"=====(
     <p class="card-desc">Credentials of the ESP32's own built-in Wi-Fi hotspot (active when no home Wi-Fi is configured or when your home router is unreachable).</p>
     <div class="info-row"><span class="info-label">Hotspot State:</span> <b id="apState">-</b></div>
     <div class="info-row"><span class="info-label">ESP32 AP Name (SSID):</span> <code id="apSsid">-</code></div>
-    <div class="info-row"><span class="info-label">ESP32 AP Password (WPA2):</span> <code id="apPass">-</code></div>
+    <div class="info-row"><span class="info-label">ESP32 AP Password (WPA3):</span> <code id="apPass">Press BOOT button</code></div>
     <div class="info-row"><span class="info-label">ESP32 AP Default IP:</span> <code>http://192.168.4.1</code></div>
   </div>
 
@@ -428,7 +428,6 @@ const char wifiPage[] PROGMEM = R"=====(
         document.getElementById('curHostname').textContent = data.hostname;
         document.getElementById('savedSsidText').textContent = data.ssid ? data.ssid : 'Not configured';
         document.getElementById('apSsid').textContent = data.hostname;
-        document.getElementById('apPass').textContent = data.ap_pass;
 
         if (data.ssid) {
           document.getElementById('wifi_ssid').value = data.ssid;
@@ -444,8 +443,8 @@ const char wifiPage[] PROGMEM = R"=====(
       if (refresh) {
         select.innerHTML = '<option value="">-- Scanning networks... --</option>';
       }
-      const url = refresh ? '/scan?refresh=1' : '/scan';
-      fetch(url).then(r => r.json()).then(list => {
+      const req = refresh ? fetch('/scan', { method: 'POST' }) : fetch('/scan');
+      req.then(r => r.json()).then(list => {
         select.innerHTML = '<option value="">-- Select a scanned Wi-Fi network --</option>';
         list.forEach(item => {
           const opt = document.createElement('option');

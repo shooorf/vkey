@@ -22,13 +22,14 @@ Libraries:
    - Reordered header includes in BleCombo.cpp to prevent multiple definition conflicts with the standard BLE stack
    - Added pServer->advertiseOnDisconnect(true) to automatically restart advertising after BLE disconnection in NimBLE 2.x
    - Added advertising->setName(deviceName) to broadcast the device name directly in the NimBLE 2.x advertisement packet
+   - Set constant 0 dBm (1 mW) BLE transmit power via BLEDevice::setPower(0) after BLEDevice::init()
    - Removed deprecated hid->startServices() call (for NimBLE) and unused <driver/adc.h> header
    - Fixed a bug in Mouse.cpp where Mouse_::releaseAll() called release() instead of releaseMouse()
    - Added include guards and relative "BleCombo.h" includes in BleKeyboard.h and BleMouse.h
 
 Usage:
-* The board derives a deterministic, unique 10-character Access Point WPA2 password from its internal factory-burned silicon IDs (eFuse Block 2/1 and SPI Flash Unique ID via SHA-256) that remains constant even after an NVS reset.
-* If no home Wi-Fi network is configured or the saved network is unreachable, the board starts a WPA2 Access Point named "vkeyxxxx" (where xxxx are the last 4 hex characters of its MAC address).
+* The board derives a deterministic, unique 10-character Access Point WPA3 password from its internal factory-burned silicon IDs (eFuse Block 2/1 and SPI Flash Unique ID via SHA-256) that remains constant even after an NVS reset.
+* If no home Wi-Fi network is configured or the saved network is unreachable, the board starts a WPA3-Only Access Point (limited to 1 client connection) named "vkeyxxxx" (where xxxx are the last 4 hex characters of its MAC address).
 * To get the current IP address and Access Point password: pair the board via Bluetooth ("Ugreen BT") with the target computer, focus any text input field (e.g., Notepad), and short-press the BOOT button on the board:
   - In AP setup mode, it will type:
     Please connect to wifi access point vkeya1b2 with password xxxxxxxxxx, then navigate to captive portal or manually open http://192.168.4.1
@@ -74,6 +75,7 @@ Usage:
 #define BOOT_LONG_PRESS_MS 3000
 #define WIFI_CONNECT_TIMEOUT_MS 15000
 #define SERIAL_LOG_MAX_CHARS 256
+#define DEBUG_LOG_KEYS 0
 #define CAPS_LOOKAHEAD_WINDOW 16
 #define CAPS_MIN_UPPER_RUN 5
 
@@ -163,9 +165,13 @@ void toggleCapsLock(bool logToSerial) {
   delay(random(keyPressMinMs, keyPressMaxMs + 1));
   Keyboard.releaseAll();
   capsLockActive = !capsLockActive;
+#if DEBUG_LOG_KEYS
   if (logToSerial) {
     Serial.print(capsLockActive ? "[CAPS:ON]" : "[CAPS:OFF]");
   }
+#else
+  (void)logToSerial;
+#endif
 }
 
 void eraseAllAndReboot() {
@@ -203,6 +209,7 @@ void startPrintText(const String& text) {
   currentDelay = random(keyDelayMinMs, keyDelayMaxMs + 1);
   lastCharTime = millis();
 
+#if DEBUG_LOG_KEYS
   Serial.printf("Print started (%u chars): ", (unsigned int)text.length());
   if (text.length() > SERIAL_LOG_MAX_CHARS) {
     Serial.print(text.substring(0, SERIAL_LOG_MAX_CHARS));
@@ -211,6 +218,9 @@ void startPrintText(const String& text) {
     Serial.println(text);
   }
   Serial.print("Keys: ");
+#else
+  Serial.printf("Print started (%u chars)\n", (unsigned int)text.length());
+#endif
 }
 
 void handleBootButton(bool allowShortPress = true) {
@@ -326,20 +336,22 @@ void startAccessPointMode() {
   WiFi.setSleep(false);
   performWifiScan();
 
-  // 2. Now switch to pure AP mode and start the Access Point
+  // 2. Now switch to pure AP mode and start the WPA3-Only Access Point (max_connection = 1)
   WiFi.mode(WIFI_AP);
   WiFi.setSleep(false);
-  WiFi.softAP(myHostname.c_str(), apPass.c_str());
+  WiFi.softAP(myHostname.c_str(), apPass.c_str(), 1, 0, 1, false, WIFI_AUTH_WPA3_PSK);
 
   IPAddress apIp = WiFi.softAPIP();
   dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
   dnsServer.start(53, "*", apIp);
 
-  Serial.println("\n--- Started Wi-Fi Access Point Mode ---");
+  Serial.println("\n--- Started Wi-Fi Access Point Mode (WPA3-Only, max 1 client) ---");
   Serial.print("AP SSID: ");
   Serial.println(myHostname);
+#if DEBUG_LOG_KEYS
   Serial.print("AP Pass: ");
   Serial.println(apPass);
+#endif
   Serial.print("AP IP:   ");
   Serial.println(apIp);
 }
@@ -464,7 +476,7 @@ void setup() {
     }
   });
 
-  server.on("/cancel", []() {
+  server.on("/cancel", HTTP_POST, []() {
     if (capsLockActive && bleDevice.isConnected()) {
       delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
       toggleCapsLock(true);
@@ -494,7 +506,6 @@ void setup() {
     json += "\"max_alloc\":" + String(ESP.getMaxAllocHeap()) + ",";
     json += "\"ap_mode\":" + String(apMode ? "true" : "false") + ",";
     json += "\"hostname\":\"" + jsonEscape(myHostname) + "\",";
-    json += "\"ap_pass\":\"" + jsonEscape(apPass) + "\",";
     json += "\"ip\":\"" + jsonEscape(ipStr) + "\",";
     json += "\"ssid\":\"" + jsonEscape(savedSsid) + "\",";
     json += "\"sleep_active\":" + String(sleepTimerActive ? "true" : "false") + ",";
@@ -504,9 +515,14 @@ void setup() {
   });
 
   server.on("/scan", HTTP_GET, []() {
-    if (server.hasArg("refresh") || !scanCacheValid) {
+    if (!scanCacheValid) {
       performWifiScan();
     }
+    server.send(200, "application/json", cachedScanJson);
+  });
+
+  server.on("/scan", HTTP_POST, []() {
+    performWifiScan();
     server.send(200, "application/json", cachedScanJson);
   });
 
@@ -652,7 +668,7 @@ void setup() {
     }
   });
 
-  server.on("/reset_nvs", []() {
+  server.on("/reset_nvs", HTTP_POST, []() {
     Serial.println("\nWeb UI /reset_nvs -> full NVS reset");
     server.send(200, "text/plain", "NVS Erased. Rebooting...");
     eraseAllAndReboot();
@@ -691,62 +707,61 @@ void loop() {
       int curIdx = printIndex;
       char c = pendingText[printIndex];
       printIndex++;
-      bool logChar = (curIdx < SERIAL_LOG_MAX_CHARS);
+      bool logChar = (DEBUG_LOG_KEYS && curIdx < SERIAL_LOG_MAX_CHARS);
+#if DEBUG_LOG_KEYS
       if (curIdx == SERIAL_LOG_MAX_CHARS) {
         Serial.print("... [truncated]");
       }
+#endif
 
-      // Filter out non-ASCII UTF-8 characters (keep only ASCII 0-127)
-      if ((unsigned char)c < 128) {
-        // Ignore \r to prevent double line breaks
-        if (c != '\r') {
-          if (isUpperLetter(c)) {
-            if (!capsLockActive && shouldEnableCapsLock(pendingText, curIdx, nextCapsCheckIndex)) {
-              toggleCapsLock(logChar);
-              delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-            }
-            if (capsLockActive) {
-              char lowerKey = c - 'A' + 'a';
-              if (logChar) Serial.print(lowerKey);
-              Keyboard.press(lowerKey);
-              delay(random(keyPressMinMs, keyPressMaxMs + 1));
-              Keyboard.releaseAll();
-            } else {
-              if (logChar) Serial.printf("[S+%c]", c);
-              Keyboard.press(KEY_LEFT_SHIFT);
-              delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-              Keyboard.press(c);
-              delay(random(keyPressMinMs, keyPressMaxMs + 1));
-              Keyboard.releaseAll();
-            }
-          } else if (isLowerLetter(c) || isShiftedSymbol(c)) {
-            if (capsLockActive) {
-              toggleCapsLock(logChar);
-              delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-            }
-            if (isShiftedSymbol(c)) {
-              if (logChar) Serial.printf("[S+%c]", c);
-              Keyboard.press(KEY_LEFT_SHIFT);
-              delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-              Keyboard.press(c);
-              delay(random(keyPressMinMs, keyPressMaxMs + 1));
-              Keyboard.releaseAll();
-            } else {
-              if (logChar) Serial.print(c);
-              Keyboard.press(c);
-              delay(random(keyPressMinMs, keyPressMaxMs + 1));
-              Keyboard.releaseAll();
-            }
+      // Strict ASCII whitelist: only printable ASCII (32..126), newline (\n), and tab (\t)
+      if (isAllowedPrintChar(c)) {
+        if (isUpperLetter(c)) {
+          if (!capsLockActive && shouldEnableCapsLock(pendingText, curIdx, nextCapsCheckIndex)) {
+            toggleCapsLock(logChar);
+            delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+          }
+          if (capsLockActive) {
+            char lowerKey = c - 'A' + 'a';
+            if (logChar) Serial.print(lowerKey);
+            Keyboard.press(lowerKey);
+            delay(random(keyPressMinMs, keyPressMaxMs + 1));
+            Keyboard.releaseAll();
           } else {
-            // Neutral characters (digits, spaces, punctuation not requiring Shift)
+            if (logChar) Serial.printf("[S+%c]", c);
+            Keyboard.press(KEY_LEFT_SHIFT);
+            delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+            Keyboard.press(c);
+            delay(random(keyPressMinMs, keyPressMaxMs + 1));
+            Keyboard.releaseAll();
+          }
+        } else if (isLowerLetter(c) || isShiftedSymbol(c)) {
+          if (capsLockActive) {
+            toggleCapsLock(logChar);
+            delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+          }
+          if (isShiftedSymbol(c)) {
+            if (logChar) Serial.printf("[S+%c]", c);
+            Keyboard.press(KEY_LEFT_SHIFT);
+            delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+            Keyboard.press(c);
+            delay(random(keyPressMinMs, keyPressMaxMs + 1));
+            Keyboard.releaseAll();
+          } else {
             if (logChar) Serial.print(c);
             Keyboard.press(c);
             delay(random(keyPressMinMs, keyPressMaxMs + 1));
             Keyboard.releaseAll();
           }
-          lastCharTime = millis();
-          currentDelay = random(keyDelayMinMs, keyDelayMaxMs + 1);
+        } else {
+          // Neutral characters (digits, spaces, punctuation not requiring Shift)
+          if (logChar) Serial.print(c);
+          Keyboard.press(c);
+          delay(random(keyPressMinMs, keyPressMaxMs + 1));
+          Keyboard.releaseAll();
         }
+        lastCharTime = millis();
+        currentDelay = random(keyDelayMinMs, keyDelayMaxMs + 1);
       }
       
       if (printIndex >= pendingText.length()) {
@@ -756,7 +771,7 @@ void loop() {
         }
         isPrinting = false;
         pendingText = String();
-        Serial.println("\nPrinting finished");
+        Serial.println(DEBUG_LOG_KEYS ? "\nPrinting finished" : "Printing finished");
       }
     }
   }

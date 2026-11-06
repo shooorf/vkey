@@ -147,6 +147,7 @@ void BleCombo::begin(void)
 	{
 #if defined(USE_NIMBLE)
 		BLEDevice::init(deviceName);
+		BLEDevice::setPower(0); // Set constant 0 dBm (1 mW) BLE transmit power
 #else
 		BLEDevice::init(String(deviceName.c_str()));
 #endif

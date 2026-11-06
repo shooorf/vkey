@@ -65,6 +65,12 @@ inline String jsonEscape(const String& s) {
   return out;
 }
 
+inline bool isAllowedPrintChar(char c) {
+  // Strict ASCII whitelist: only printable ASCII (32..126), newline (\n), and tab (\t)
+  unsigned char uc = (unsigned char)c;
+  return (uc >= 32 && uc <= 126) || c == '\n' || c == '\t';
+}
+
 inline bool isUpperLetter(char c) {
   return (c >= 'A' && c <= 'Z');
 }
