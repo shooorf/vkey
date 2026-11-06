@@ -3,6 +3,7 @@
 #include <esp_mac.h>
 #include <esp_efuse.h>
 #include <esp_flash.h>
+#include <esp_random.h>
 #include <mbedtls/sha256.h>
 
 #ifndef CAPS_LOOKAHEAD_WINDOW
@@ -51,6 +52,25 @@ inline String generateApPassword() {
     buf[i] = charset[hash[i] % charsetLen];
   }
   buf[10] = '\0';
+  return String(buf);
+}
+
+inline String generateCsrfToken() {
+  char buf[33];
+  snprintf(buf, sizeof(buf), "%08x%08x%08x%08x",
+           (unsigned int)esp_random(), (unsigned int)esp_random(),
+           (unsigned int)esp_random(), (unsigned int)esp_random());
+  return String(buf);
+}
+
+inline String sha256Hex128(const String& data) {
+  uint8_t hash[32] = {0};
+  mbedtls_sha256((const unsigned char*)data.c_str(), data.length(), hash, 0);
+  char buf[33];
+  for (int i = 0; i < 16; i++) {
+    snprintf(buf + i * 2, 3, "%02x", hash[i]);
+  }
+  buf[32] = '\0';
   return String(buf);
 }
 

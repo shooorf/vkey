@@ -26,7 +26,10 @@ It is designed for pasting text and scripts into machines where clipboard sharin
   * Unique per-device hostname and Access Point SSID based on the chip's MAC address: `vkeyxxxx` (last 4 hex digits of MAC).
   * **WPA3-Only Hotspot with Single-Client Lock (`max_connection = 1`):** Built-in SoftAP runs in strict **WPA3-Personal (`WIFI_AUTH_WPA3_PSK`, SAE + Protected Management Frames `802.11w`)** mode and limits simultaneous connections to `1` client, preventing offline handshake/PMKID dictionary attacks, Wi-Fi deauthentication attacks, and unauthorized parallel connections.
   * Deterministic per-board 10-character WPA3 password derived via `SHA-256` from internal factory-burned silicon IDs (`eFuse Block 2` 128-bit Unique ID, `eFuse Block 1` wafer data, and `64-bit SPI Flash Unique ID`) using an unambiguous lowercase alphanumeric character set (`abcdefghjkmnpqrstuvwxyz23456789`). These internal hardware IDs are never broadcast over radio and remain constant even after `Reset NVS` or a full flash erase.
-  * **No Password Exposure over HTTP:** The AP password (`apPass`) is never transmitted in `/status` JSON or displayed in the `/wifi` web UI (`Press BOOT button` is shown instead); obtaining the password requires physical access to the board's `BOOT` button.
+  * **HTTP Digest Auth + SHA-256 Body Integrity + CSRF Token:**
+    * When connected to a home/office Wi-Fi network (`STA Mode`), all routes require RFC 2617 **HTTP Digest Authentication** (username `admin`, password `<apPass>`) using ESP32 Core 3.3.x stateless `HMAC-SHA256` nonces (allowing simultaneous sessions on PC and smartphone without login loops or cleartext password transmission). In `AP Mode` (already protected by `WPA3-SAE` and `max_connection = 1`), Digest Auth is bypassed so smartphone Captive Portals open immediately.
+    * Every `POST` request includes a 128-bit session `X-VKey-Token` header (blocking cross-origin CSRF) and appends a 128-bit `SHA-256` hash of the request payload (`?h=<sha256_hex>`) to the URL. On the ESP32-C3, the payload hash is verified via the hardware SHA-256 accelerator (`mbedtls_sha256`) and explicitly matched against the signed `uri="..."` attribute inside the `Authorization: Digest` header, preventing both payload tampering and cross-endpoint Digest URI replay.
+  * **No Password Exposure over HTTP:** The AP/Web UI password (`apPass`) is never transmitted in `/status` JSON or displayed in the `/wifi` web UI (`Press BOOT button` is shown instead); obtaining the password requires physical access to the board's `BOOT` button.
   * **Reduced BLE Radio Footprint (`0 dBm`):** Constant BLE transmit power is set to `0 dBm` (`1 mW`, 8× lower than the `+9 dBm` default via `BLEDevice::setPower(0)`), reliably penetrating desks at the workstation while limiting long-range BLE visibility across rooms and reducing antenna heating.
   * **POST-Only State Mutations:** All state-changing and radio-blocking endpoints (`/type`, `/cancel`, `/wifi`, `/keyboard`, `/settings`, `/scroller`, `/sleep`, `/reset_nvs`, and live Wi-Fi rescan `POST /scan`) require `HTTP_POST`, preventing cross-site `GET` (`<img>` tag) resets or Wi-Fi scan DoS.
   * Pre-scans surrounding Wi-Fi networks in pure `WIFI_STA` mode before launching `WIFI_AP` so smartphones (including Android / Xiaomi Captive Portals) never drop the hotspot connection due to channel hopping when opening the setup page.
@@ -35,7 +38,7 @@ It is designed for pasting text and scripts into machines where clipboard sharin
 * **Hardware `BOOT` Button Controls:**
   * **Short press (`50 ms – 3 s`):** Types human-readable connection instructions directly into the active text field on the BLE-connected computer:
     * In AP mode: `Please connect to wifi access point vkeyxxxx with password <password>, then navigate to captive portal or manually open http://192.168.4.1`
-    * In home Wi-Fi mode (connected): `Please connect via configured wifi network to http://<dhcp-ip>`
+    * In home Wi-Fi mode (connected): `Please connect via configured wifi network to http://<dhcp-ip> (login: admin, password: <password>)`
     * In home Wi-Fi mode (disconnected/reconnecting): `Wi-Fi network <ssid> is currently disconnected (reconnecting). Check router or reboot device to start Access Point`
   * **Long press (hold for `3 seconds` after power-on):** Full factory reset — safely releases keys / turns off `Caps Lock` if active, erases all NVS data (Wi-Fi credentials, Keyboard/Jiggler/Scroller settings, and BLE bonds), and reboots.
 * **Live Memory Diagnostics & Privacy-Safe Serial Logging:**
@@ -54,7 +57,7 @@ It is designed for pasting text and scripts into machines where clipboard sharin
    ```text
    Please connect to wifi access point vkeya1b2 with password k9m4x7p2q8, then navigate to captive portal or manually open http://192.168.4.1
    ```
-   *(When already connected to your home Wi-Fi, a short press on `BOOT` will instead type: `Please connect via configured wifi network to http://192.168.1.xxx`)*
+   *(When already connected to your home Wi-Fi, a short press on `BOOT` will instead type: `Please connect via configured wifi network to http://192.168.1.xxx (login: admin, password: k9m4x7p2q8)`)*
 5. Connect your phone or PC to the Wi-Fi network **`vkeya1b2`** using the printed password.
 6. A Captive Portal window will open automatically to the main page (`http://192.168.4.1/`), where you can immediately use the keyboard/mouse in AP mode or click **Wi-Fi Settings →** (`/wifi`) in the top banner to connect the board to your home router.
 7. In the **Connect to Home Wi-Fi Router** card, select your home Wi-Fi network from the scanned dropdown (or type the SSID manually), enter your Wi-Fi password, and click **Save Wi-Fi & Reboot**.

@@ -37,7 +37,7 @@ const char htmlPage[] PROGMEM = R"=====(
   <form id="typeForm" action="/type" method="POST">
     <textarea name="payload" id="payloadText" rows="10" placeholder="Enter text..."></textarea><br><br>
     <input type="submit" id="printBtn" class="btn" value="Print">
-    <button type="button" id="cancelBtn" class="btn" onclick="fetch('/cancel', { method: 'POST' }).then(()=>updateStatus())">Cancel</button>
+    <button type="button" id="cancelBtn" class="btn" onclick="apiPost('/cancel').then(()=>updateStatus())">Cancel</button>
   </form>
 
   <hr>
@@ -143,7 +143,7 @@ const char htmlPage[] PROGMEM = R"=====(
   <button type="button" id="sleepStopBtn" class="btn" onclick="setSleepTimer('stop')" disabled>Disable Timer</button>
 
   <hr>
-  <button type="button" class="btn" style="background-color: #ffcccc;" onclick="if(confirm('Erase all settings (Wi-Fi, Jiggler, BLE bonds) and Reboot?')) fetch('/reset_nvs', { method: 'POST' });">Reset NVS (Full Reset)</button>
+  <button type="button" class="btn" style="background-color: #ffcccc;" onclick="if(confirm('Erase all settings (Wi-Fi, Jiggler, BLE bonds) and Reboot?')) apiPost('/reset_nvs');">Reset NVS (Full Reset)</button>
 
   <script>
     const statusDiv = document.getElementById('status');
@@ -157,6 +157,88 @@ const char htmlPage[] PROGMEM = R"=====(
     let sleepRemSec = 0;
     let isPrintingNow = false;
     let pollTick = 0;
+    let csrfToken = '';
+
+    function sha256_128(str) {
+      const K = [
+        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+      ];
+      const bytes = new TextEncoder().encode(str);
+      const bitLen = bytes.length * 8;
+      const totalWords = (((bytes.length + 8) >> 6) + 1) << 4;
+      const words = new Int32Array(totalWords);
+      for (let i = 0; i < bytes.length; i++) {
+        words[i >> 2] |= bytes[i] << (24 - (i & 3) * 8);
+      }
+      words[bytes.length >> 2] |= 0x80 << (24 - (bytes.length & 3) * 8);
+      words[totalWords - 2] = Math.floor(bitLen / 0x100000000);
+      words[totalWords - 1] = bitLen | 0;
+
+      let H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+      const W = new Int32Array(64);
+      const rotr = (n, x) => (x >>> n) | (x << (32 - n));
+
+      for (let i = 0; i < totalWords; i += 16) {
+        for (let t = 0; t < 16; t++) W[t] = words[i + t];
+        for (let t = 16; t < 64; t++) {
+          const s0 = rotr(7, W[t - 15]) ^ rotr(18, W[t - 15]) ^ (W[t - 15] >>> 3);
+          const s1 = rotr(17, W[t - 2]) ^ rotr(19, W[t - 2]) ^ (W[t - 2] >>> 10);
+          W[t] = (W[t - 16] + s0 + W[t - 7] + s1) | 0;
+        }
+        let [a, b, c, d, e, f, g, h] = H;
+        for (let t = 0; t < 64; t++) {
+          const S1 = rotr(6, e) ^ rotr(11, e) ^ rotr(25, e);
+          const ch = (e & f) ^ (~e & g);
+          const temp1 = (h + S1 + ch + K[t] + W[t]) | 0;
+          const S0 = rotr(2, a) ^ rotr(13, a) ^ rotr(22, a);
+          const maj = (a & b) ^ (a & c) ^ (b & c);
+          const temp2 = (S0 + maj) | 0;
+          h = g; g = f; f = e; e = (d + temp1) | 0;
+          d = c; c = b; b = a; a = (temp1 + temp2) | 0;
+        }
+        H = [(H[0]+a)|0, (H[1]+b)|0, (H[2]+c)|0, (H[3]+d)|0, (H[4]+e)|0, (H[5]+f)|0, (H[6]+g)|0, (H[7]+h)|0];
+      }
+      return H.slice(0, 4).map(v => (v >>> 0).toString(16).padStart(8, '0')).join('');
+    }
+
+    async function apiPost(url, body) {
+      let raw = '';
+      if (typeof body === 'string') {
+        raw = body;
+      } else if (body instanceof URLSearchParams) {
+        for (const [k, v] of body) raw += k + '=' + v + '\n';
+      }
+      const h = sha256_128(raw);
+      if (!csrfToken) {
+        try {
+          const s = await fetch('/status').then(r => r.json());
+          if (s.token) csrfToken = s.token;
+        } catch (e) {}
+      }
+      const sendReq = () => {
+        const headers = { 'X-VKey-Token': csrfToken };
+        if (typeof body === 'string') headers['Content-Type'] = 'text/plain;charset=UTF-8';
+        const opts = { method: 'POST', headers };
+        if (body !== undefined) opts.body = body;
+        return fetch(url + '?h=' + h, opts);
+      };
+      let res = await sendReq();
+      if (res.status === 403) {
+        try {
+          const s = await fetch('/status').then(r => r.json());
+          if (s.token) csrfToken = s.token;
+          res = await sendReq();
+        } catch (e) {}
+      }
+      return res;
+    }
 
     function escHtml(s) {
       return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -193,12 +275,12 @@ const char htmlPage[] PROGMEM = R"=====(
         }
         data.set('hours', String(hrs));
       }
-      fetch('/sleep', { method: 'POST', body: data })
-        .then(() => updateStatus());
+      apiPost('/sleep', data).then(() => updateStatus());
     }
 
     function updateStatus() {
       fetch('/status').then(r => r.json()).then(data => {
+        if (data.token) csrfToken = data.token;
         isPrintingNow = !!data.printing;
         if (!data.connected) {
           statusDiv.innerHTML = "<span style='color:red;'>BLE Not Connected</span>";
@@ -235,11 +317,7 @@ const char htmlPage[] PROGMEM = R"=====(
     document.getElementById('typeForm').onsubmit = function(e) {
       e.preventDefault();
       const text = document.getElementById('payloadText').value;
-      fetch('/type', {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-        body: text
-      }).then(() => {
+      apiPost('/type', text).then(() => {
         updateStatus();
       });
     };
@@ -276,7 +354,7 @@ const char htmlPage[] PROGMEM = R"=====(
     document.getElementById('keyboardForm').onsubmit = function(e) {
       e.preventDefault();
       let data = new URLSearchParams(new FormData(e.target));
-      fetch('/keyboard', { method: 'POST', body: data })
+      apiPost('/keyboard', data)
         .then(() => { loadSettings(); alert('Keyboard settings saved!'); });
     };
 
@@ -286,7 +364,7 @@ const char htmlPage[] PROGMEM = R"=====(
       if (!document.getElementById('set_enabled').checked) data.append('enabled', 'false');
       else data.set('enabled', 'true');
 
-      fetch('/settings', { method: 'POST', body: data })
+      apiPost('/settings', data)
         .then(() => { loadSettings(); alert('Jiggler settings saved!'); });
     };
 
@@ -296,10 +374,13 @@ const char htmlPage[] PROGMEM = R"=====(
       if (!document.getElementById('set_sc_enabled').checked) data.append('sc_enabled', 'false');
       else data.set('sc_enabled', 'true');
 
-      fetch('/scroller', { method: 'POST', body: data })
+      apiPost('/scroller', data)
         .then(() => { loadSettings(); alert('Scroller settings saved!'); });
     };
 
+    document.addEventListener('visibilitychange', function() {
+      if (!document.hidden) updateStatus();
+    });
     loadSettings();
     updateStatus();
     setInterval(function() {
@@ -399,8 +480,92 @@ const char wifiPage[] PROGMEM = R"=====(
   <a href="/" class="nav-link">&larr; Back to Main Page (Keyboard &amp; Mouse)</a>
 
   <script>
+    let csrfToken = '';
+
+    function sha256_128(str) {
+      const K = [
+        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+      ];
+      const bytes = new TextEncoder().encode(str);
+      const bitLen = bytes.length * 8;
+      const totalWords = (((bytes.length + 8) >> 6) + 1) << 4;
+      const words = new Int32Array(totalWords);
+      for (let i = 0; i < bytes.length; i++) {
+        words[i >> 2] |= bytes[i] << (24 - (i & 3) * 8);
+      }
+      words[bytes.length >> 2] |= 0x80 << (24 - (bytes.length & 3) * 8);
+      words[totalWords - 2] = Math.floor(bitLen / 0x100000000);
+      words[totalWords - 1] = bitLen | 0;
+
+      let H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+      const W = new Int32Array(64);
+      const rotr = (n, x) => (x >>> n) | (x << (32 - n));
+
+      for (let i = 0; i < totalWords; i += 16) {
+        for (let t = 0; t < 16; t++) W[t] = words[i + t];
+        for (let t = 16; t < 64; t++) {
+          const s0 = rotr(7, W[t - 15]) ^ rotr(18, W[t - 15]) ^ (W[t - 15] >>> 3);
+          const s1 = rotr(17, W[t - 2]) ^ rotr(19, W[t - 2]) ^ (W[t - 2] >>> 10);
+          W[t] = (W[t - 16] + s0 + W[t - 7] + s1) | 0;
+        }
+        let [a, b, c, d, e, f, g, h] = H;
+        for (let t = 0; t < 64; t++) {
+          const S1 = rotr(6, e) ^ rotr(11, e) ^ rotr(25, e);
+          const ch = (e & f) ^ (~e & g);
+          const temp1 = (h + S1 + ch + K[t] + W[t]) | 0;
+          const S0 = rotr(2, a) ^ rotr(13, a) ^ rotr(22, a);
+          const maj = (a & b) ^ (a & c) ^ (b & c);
+          const temp2 = (S0 + maj) | 0;
+          h = g; g = f; f = e; e = (d + temp1) | 0;
+          d = c; c = b; b = a; a = (temp1 + temp2) | 0;
+        }
+        H = [(H[0]+a)|0, (H[1]+b)|0, (H[2]+c)|0, (H[3]+d)|0, (H[4]+e)|0, (H[5]+f)|0, (H[6]+g)|0, (H[7]+h)|0];
+      }
+      return H.slice(0, 4).map(v => (v >>> 0).toString(16).padStart(8, '0')).join('');
+    }
+
+    async function apiPost(url, body) {
+      let raw = '';
+      if (typeof body === 'string') {
+        raw = body;
+      } else if (body instanceof URLSearchParams) {
+        for (const [k, v] of body) raw += k + '=' + v + '\n';
+      }
+      const h = sha256_128(raw);
+      if (!csrfToken) {
+        try {
+          const s = await fetch('/status').then(r => r.json());
+          if (s.token) csrfToken = s.token;
+        } catch (e) {}
+      }
+      const sendReq = () => {
+        const headers = { 'X-VKey-Token': csrfToken };
+        if (typeof body === 'string') headers['Content-Type'] = 'text/plain;charset=UTF-8';
+        const opts = { method: 'POST', headers };
+        if (body !== undefined) opts.body = body;
+        return fetch(url + '?h=' + h, opts);
+      };
+      let res = await sendReq();
+      if (res.status === 403) {
+        try {
+          const s = await fetch('/status').then(r => r.json());
+          if (s.token) csrfToken = s.token;
+          res = await sendReq();
+        } catch (e) {}
+      }
+      return res;
+    }
+
     function loadNetworkInfo() {
       fetch('/status').then(r => r.json()).then(data => {
+        if (data.token) csrfToken = data.token;
         const curMode = document.getElementById('curMode');
         const curNetwork = document.getElementById('curNetwork');
         const apState = document.getElementById('apState');
@@ -443,7 +608,7 @@ const char wifiPage[] PROGMEM = R"=====(
       if (refresh) {
         select.innerHTML = '<option value="">-- Scanning networks... --</option>';
       }
-      const req = refresh ? fetch('/scan', { method: 'POST' }) : fetch('/scan');
+      const req = refresh ? apiPost('/scan') : fetch('/scan');
       req.then(r => r.json()).then(list => {
         select.innerHTML = '<option value="">-- Select a scanned Wi-Fi network --</option>';
         list.forEach(item => {
@@ -464,7 +629,7 @@ const char wifiPage[] PROGMEM = R"=====(
     document.getElementById('wifiForm').onsubmit = function(e) {
       e.preventDefault();
       let data = new URLSearchParams(new FormData(e.target));
-      fetch('/wifi', { method: 'POST', body: data })
+      apiPost('/wifi', data)
         .then(r => r.text())
         .then(msg => alert(msg));
     };

@@ -34,7 +34,7 @@ Usage:
   - In AP setup mode, it will type:
     Please connect to wifi access point vkeya1b2 with password xxxxxxxxxx, then navigate to captive portal or manually open http://192.168.4.1
   - When connected to a configured home Wi-Fi network, it will type:
-    Please connect via configured wifi network to http://192.168.1.xxx
+    Please connect via configured wifi network to http://192.168.1.xxx (login: admin, password: xxxxxxxxxx)
 * Connect to the "vkeyxxxx" Wi-Fi network from a phone or PC using that password — a Captive Portal will open (or navigate to http://192.168.4.1), where you can use the keyboard/mouse immediately or click "Wi-Fi Settings" (/wifi) to connect to your home Wi-Fi router.
 * Once connected to your home Wi-Fi, the web interface is accessible at http://vkey.local or via the board's IP address (shown in your router's DHCP leases as vkeyxxxx).
 * Onboard BOOT button (GPIO 9):
@@ -85,6 +85,7 @@ Preferences preferences;
 
 String myHostname = "vkey";
 String apPass = "";
+String csrfToken = "";
 String savedSsid = "";
 String savedPass = "";
 String cachedScanJson = "[]";
@@ -261,7 +262,8 @@ void handleBootButton(bool allowShortPress = true) {
                       WiFi.softAPIP().toString();
           } else if (WiFi.status() == WL_CONNECTED) {
             infoStr = "Please connect via configured wifi network to http://" +
-                      WiFi.localIP().toString();
+                      WiFi.localIP().toString() +
+                      " (login: admin, password: " + apPass + ")";
           } else {
             infoStr = "Wi-Fi network " + savedSsid +
                       " is currently disconnected (reconnecting). Check router or reboot device to start Access Point";
@@ -356,6 +358,62 @@ void startAccessPointMode() {
   Serial.println(apIp);
 }
 
+String computeRequestHash() {
+  if (server.hasArg("plain")) {
+    return sha256Hex128(server.arg("plain"));
+  }
+  String raw = "";
+  int n = server.args();
+  for (int i = 0; i < n; i++) {
+    if (server.argName(i) != "h") {
+      raw += server.argName(i) + "=" + server.arg(i) + "\n";
+    }
+  }
+  return sha256Hex128(raw);
+}
+
+bool checkAuth() {
+  // 1. In STA mode (home/office Wi-Fi), require RFC 2617 HTTP Digest Authentication
+  // (In AP mode, the client is already authenticated via WPA3-SAE with max_connection = 1)
+  if (!apMode) {
+    if (!server.authenticate("admin", apPass.c_str())) {
+      server.requestAuthentication(DIGEST_AUTH, "vkey", "Authentication required");
+      return false;
+    }
+  }
+
+  // 2. For all POST requests, require X-VKey-Token (CSRF defense) and SHA-256 body hash in ?h=
+  if (server.method() == HTTP_POST) {
+    if (server.header("X-VKey-Token") != csrfToken) {
+      server.send(403, "text/plain", "Invalid or missing CSRF token");
+      return false;
+    }
+    String expectedHash = computeRequestHash();
+    if (!server.hasArg("h") || server.arg("h") != expectedHash) {
+      server.send(403, "text/plain", "Invalid body hash");
+      return false;
+    }
+    if (!apMode) {
+      String expectedUriAttr = "uri=\"" + server.uri() + "?h=" + expectedHash + "\"";
+      if (server.header("Authorization").indexOf(expectedUriAttr) < 0) {
+        server.send(403, "text/plain", "Digest URI mismatch");
+        return false;
+      }
+    }
+  } else if (!apMode) {
+    // For GET requests in STA mode, ensure the signed Digest URI matches the requested endpoint path
+    String authHdr = server.header("Authorization");
+    String exactUri = "uri=\"" + server.uri() + "\"";
+    String queryUri = "uri=\"" + server.uri() + "?";
+    if (authHdr.indexOf(exactUri) < 0 && authHdr.indexOf(queryUri) < 0) {
+      server.send(403, "text/plain", "Digest URI mismatch");
+      return false;
+    }
+  }
+
+  return true;
+}
+
 void setup() {
   pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
   randomSeed(esp_random());
@@ -408,6 +466,7 @@ void setup() {
   savedSsid = preferences.getString("wifi_ssid", "");
   savedPass = preferences.getString("wifi_pass", "");
   apPass = generateApPassword();
+  csrfToken = generateCsrfToken();
 
   nextJiggleDelay = random(jiggleIntervalMinSec, jiggleIntervalMaxSec + 1) * 1000UL;
   lastJiggleActionTime = millis();
@@ -454,11 +513,16 @@ void setup() {
 
   // --- Configure Web Server routes ---
 
+  const char* headerKeys[] = {"X-VKey-Token", "Authorization"};
+  server.collectHeaders(headerKeys, 2);
+
   server.on("/", []() {
+    if (!checkAuth()) return;
     server.send_P(200, "text/html", htmlPage);
   });
 
   server.on("/type", HTTP_POST, []() {
+    if (!checkAuth()) return;
     if (!bleDevice.isConnected()) {
       server.send(400, "text/plain", "BLE not connected");
       return;
@@ -477,6 +541,7 @@ void setup() {
   });
 
   server.on("/cancel", HTTP_POST, []() {
+    if (!checkAuth()) return;
     if (capsLockActive && bleDevice.isConnected()) {
       delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
       toggleCapsLock(true);
@@ -489,6 +554,7 @@ void setup() {
   });
 
   server.on("/status", []() {
+    if (!checkAuth()) return;
     String ipStr = apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
     unsigned long sleepRemSec = 0;
     if (sleepTimerActive && !sleepTimerExpired) {
@@ -508,6 +574,7 @@ void setup() {
     json += "\"hostname\":\"" + jsonEscape(myHostname) + "\",";
     json += "\"ip\":\"" + jsonEscape(ipStr) + "\",";
     json += "\"ssid\":\"" + jsonEscape(savedSsid) + "\",";
+    json += "\"token\":\"" + csrfToken + "\",";
     json += "\"sleep_active\":" + String(sleepTimerActive ? "true" : "false") + ",";
     json += "\"sleep_rem_sec\":" + String(sleepRemSec);
     json += "}";
@@ -515,6 +582,7 @@ void setup() {
   });
 
   server.on("/scan", HTTP_GET, []() {
+    if (!checkAuth()) return;
     if (!scanCacheValid) {
       performWifiScan();
     }
@@ -522,15 +590,18 @@ void setup() {
   });
 
   server.on("/scan", HTTP_POST, []() {
+    if (!checkAuth()) return;
     performWifiScan();
     server.send(200, "application/json", cachedScanJson);
   });
 
   server.on("/wifi", HTTP_GET, []() {
+    if (!checkAuth()) return;
     server.send_P(200, "text/html", wifiPage);
   });
 
   server.on("/wifi", HTTP_POST, []() {
+    if (!checkAuth()) return;
     if (!server.hasArg("ssid") || server.arg("ssid").length() == 0) {
       server.send(400, "text/plain", "SSID is required");
       return;
@@ -556,6 +627,7 @@ void setup() {
   });
 
   server.on("/settings", HTTP_GET, []() {
+    if (!checkAuth()) return;
     String json = "{";
     json += "\"kb_prs_min\":" + String(keyPressMinMs) + ",";
     json += "\"kb_prs_max\":" + String(keyPressMaxMs) + ",";
@@ -584,6 +656,7 @@ void setup() {
   });
 
   server.on("/keyboard", HTTP_POST, []() {
+    if (!checkAuth()) return;
     if (server.hasArg("kb_prs_min")) { keyPressMinMs = max(1, (int)server.arg("kb_prs_min").toInt()); preferences.putInt("kb_prs_min", keyPressMinMs); }
     if (server.hasArg("kb_prs_max")) { keyPressMaxMs = max(keyPressMinMs, (int)server.arg("kb_prs_max").toInt()); preferences.putInt("kb_prs_max", keyPressMaxMs); }
     if (server.hasArg("kb_dly_min")) { keyDelayMinMs = max(1, (int)server.arg("kb_dly_min").toInt()); preferences.putInt("kb_dly_min", keyDelayMinMs); }
@@ -593,6 +666,7 @@ void setup() {
   });
 
   server.on("/settings", HTTP_POST, []() {
+    if (!checkAuth()) return;
     if (server.hasArg("enabled")) {
       jiggleEnabled = (server.arg("enabled") == "true" || server.arg("enabled") == "on");
       preferences.putBool("enabled", jiggleEnabled);
@@ -616,6 +690,7 @@ void setup() {
   });
 
   server.on("/scroller", HTTP_POST, []() {
+    if (!checkAuth()) return;
     if (server.hasArg("sc_enabled")) {
       scrollEnabled = (server.arg("sc_enabled") == "true" || server.arg("sc_enabled") == "on");
       preferences.putBool("sc_enabled", scrollEnabled);
@@ -644,6 +719,7 @@ void setup() {
   });
 
   server.on("/sleep", HTTP_POST, []() {
+    if (!checkAuth()) return;
     String action = server.hasArg("action") ? server.arg("action") : "start";
     if (action == "stop") {
       sleepTimerActive = false;
@@ -669,6 +745,7 @@ void setup() {
   });
 
   server.on("/reset_nvs", HTTP_POST, []() {
+    if (!checkAuth()) return;
     Serial.println("\nWeb UI /reset_nvs -> full NVS reset");
     server.send(200, "text/plain", "NVS Erased. Rebooting...");
     eraseAllAndReboot();
