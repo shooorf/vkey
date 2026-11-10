@@ -156,6 +156,7 @@ const char htmlPage[] PROGMEM = R"=====(
     let sleepActive = false;
     let sleepRemSec = 0;
     let isPrintingNow = false;
+    let statusInFlight = false;
     let pollTick = 0;
     let csrfToken = '';
 
@@ -279,6 +280,8 @@ const char htmlPage[] PROGMEM = R"=====(
     }
 
     function updateStatus() {
+      if (statusInFlight) return;
+      statusInFlight = true;
       fetch('/status').then(r => r.json()).then(data => {
         if (data.token) csrfToken = data.token;
         isPrintingNow = !!data.printing;
@@ -311,7 +314,9 @@ const char htmlPage[] PROGMEM = R"=====(
         let freeKb = (data.free_heap / 1024).toFixed(1);
         let maxBlockKb = (data.max_alloc / 1024).toFixed(1);
         netInfoDiv.innerHTML = `<span>Free RAM: <b>${freeKb} KB</b> (Max block: <b>${maxBlockKb} KB</b>)</span> <a href="/wifi" class="nav-link">Wi-Fi Settings &rarr;</a>`;
-      }).catch(() => {});
+      }).catch(() => {}).finally(() => {
+        statusInFlight = false;
+      });
     }
 
     document.getElementById('typeForm').onsubmit = function(e) {
@@ -381,15 +386,16 @@ const char htmlPage[] PROGMEM = R"=====(
     document.addEventListener('visibilitychange', function() {
       if (!document.hidden) updateStatus();
     });
-    loadSettings();
     updateStatus();
+    loadSettings();
     setInterval(function() {
       if (sleepActive && sleepRemSec > 0) {
         sleepRemSec--;
         renderSleepStatus();
       }
       pollTick++;
-      if (!document.hidden && (isPrintingNow || pollTick % 5 === 0)) {
+      const pollIntervalSec = isPrintingNow ? 3 : 5;
+      if (!document.hidden && (pollTick % pollIntervalSec === 0)) {
         updateStatus();
       }
     }, 1000);

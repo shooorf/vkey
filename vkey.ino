@@ -176,7 +176,7 @@ void toggleCapsLock(bool logToSerial) {
 #endif
 }
 
-void toggleHostLayout(bool logToSerial) {
+void toggleHostLayout(bool logToSerial, bool blockingWait = false) {
   if (capsLockActive) {
     toggleCapsLock(logToSerial);
     delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
@@ -194,7 +194,9 @@ void toggleHostLayout(bool logToSerial) {
 #else
   (void)logToSerial;
 #endif
-  delay(150);
+  if (blockingWait) {
+    delay(150);
+  }
 }
 
 void eraseAllAndReboot() {
@@ -205,7 +207,7 @@ void eraseAllAndReboot() {
     }
     if (ruLayoutActive) {
       delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-      toggleHostLayout(true);
+      toggleHostLayout(true, true);
     }
     Keyboard.releaseAll();
   }
@@ -576,7 +578,7 @@ void setup() {
       }
       if (ruLayoutActive) {
         delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-        toggleHostLayout(true);
+        toggleHostLayout(true, true);
       }
     }
     capsLockActive = false;
@@ -653,7 +655,7 @@ void setup() {
       }
       if (ruLayoutActive) {
         delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-        toggleHostLayout(true);
+        toggleHostLayout(true, true);
       }
       Keyboard.releaseAll();
     }
@@ -819,102 +821,112 @@ void loop() {
   // Asynchronous (non-blocking) text typing
   if (isPrinting && bleConnected) {
     if (millis() - lastCharTime >= currentDelay) {
-      int curIdx = printIndex;
-      char c = 0;
-      bool isCyrillic = false;
-      bool cyrillicUpper = false;
-      bool validToken = decodeNextPrintToken(pendingText, printIndex, c, isCyrillic, cyrillicUpper);
-      bool logChar = (DEBUG_LOG_KEYS && curIdx < SERIAL_LOG_MAX_CHARS);
+      if (printIndex >= pendingText.length()) {
+        if (capsLockActive) {
+          toggleCapsLock(true);
+          lastCharTime = millis();
+          currentDelay = random(keyDelayMinMs, keyDelayMaxMs + 1);
+        } else if (ruLayoutActive) {
+          toggleHostLayout(true, false);
+          lastCharTime = millis();
+          currentDelay = 150;
+        } else {
+          isPrinting = false;
+          pendingText = String();
+          Serial.println(DEBUG_LOG_KEYS ? "\nPrinting finished" : "Printing finished");
+        }
+      } else {
+        int curIdx = printIndex;
+        char c = 0;
+        bool isCyrillic = false;
+        bool cyrillicUpper = false;
+        bool validToken = decodeNextPrintToken(pendingText, printIndex, c, isCyrillic, cyrillicUpper);
+        bool logChar = (DEBUG_LOG_KEYS && curIdx < SERIAL_LOG_MAX_CHARS);
 #if DEBUG_LOG_KEYS
-      if (curIdx == SERIAL_LOG_MAX_CHARS) {
-        Serial.print("... [truncated]");
-      }
+        if (curIdx == SERIAL_LOG_MAX_CHARS) {
+          Serial.print("... [truncated]");
+        }
 #endif
 
-      // Strict whitelist: only printable ASCII (32..126, \n, \t) and Russian Cyrillic letters (А..Я, а..я, Ё, ё)
-      if (validToken) {
-        if (isCyrillic) {
-          if (!ruLayoutActive) {
-            toggleHostLayout(logChar);
-          }
-          if (cyrillicUpper) {
-            if (logChar) Serial.printf("[RU:S+%c]", c);
-            Keyboard.press(KEY_LEFT_SHIFT);
-            delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-            Keyboard.press(c);
-            delay(random(keyPressMinMs, keyPressMaxMs + 1));
-            Keyboard.releaseAll();
+        // Strict whitelist: only printable ASCII (32..126, \n, \t) and Russian Cyrillic letters (А..Я, а..я, Ё, ё)
+        if (validToken) {
+          bool needLayoutSwitch = (isCyrillic && !ruLayoutActive) ||
+                                  (!isCyrillic && ruLayoutActive && !isLayoutNeutralChar(c));
+          if (needLayoutSwitch) {
+            // Keep printIndex at curIdx so the character is typed on the next tick after the 150ms layout switch delay
+            printIndex = curIdx;
+            toggleHostLayout(logChar, false);
+            lastCharTime = millis();
+            currentDelay = 150;
           } else {
-            if (logChar) Serial.printf("[RU:%c]", c);
-            Keyboard.press(c);
-            delay(random(keyPressMinMs, keyPressMaxMs + 1));
-            Keyboard.releaseAll();
-          }
-        } else {
-          if (ruLayoutActive && !isLayoutNeutralChar(c)) {
-            toggleHostLayout(logChar);
-          }
-          if (isUpperLetter(c)) {
-            if (!capsLockActive && shouldEnableCapsLock(pendingText, curIdx, nextCapsCheckIndex)) {
-              toggleCapsLock(logChar);
-              delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-            }
-            if (capsLockActive) {
-              char lowerKey = c - 'A' + 'a';
-              if (logChar) Serial.print(lowerKey);
-              Keyboard.press(lowerKey);
-              delay(random(keyPressMinMs, keyPressMaxMs + 1));
-              Keyboard.releaseAll();
+            if (isCyrillic) {
+              if (cyrillicUpper) {
+                if (logChar) Serial.printf("[RU:S+%c]", c);
+                Keyboard.press(KEY_LEFT_SHIFT);
+                delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+                Keyboard.press(c);
+                delay(random(keyPressMinMs, keyPressMaxMs + 1));
+                Keyboard.releaseAll();
+              } else {
+                if (logChar) Serial.printf("[RU:%c]", c);
+                Keyboard.press(c);
+                delay(random(keyPressMinMs, keyPressMaxMs + 1));
+                Keyboard.releaseAll();
+              }
+            } else if (isUpperLetter(c)) {
+              if (!capsLockActive && shouldEnableCapsLock(pendingText, curIdx, nextCapsCheckIndex)) {
+                toggleCapsLock(logChar);
+                delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+              }
+              if (capsLockActive) {
+                char lowerKey = c - 'A' + 'a';
+                if (logChar) Serial.print(lowerKey);
+                Keyboard.press(lowerKey);
+                delay(random(keyPressMinMs, keyPressMaxMs + 1));
+                Keyboard.releaseAll();
+              } else {
+                if (logChar) Serial.printf("[S+%c]", c);
+                Keyboard.press(KEY_LEFT_SHIFT);
+                delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+                Keyboard.press(c);
+                delay(random(keyPressMinMs, keyPressMaxMs + 1));
+                Keyboard.releaseAll();
+              }
+            } else if (isLowerLetter(c) || isShiftedSymbol(c)) {
+              if (capsLockActive) {
+                toggleCapsLock(logChar);
+                delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+              }
+              if (isShiftedSymbol(c)) {
+                if (logChar) Serial.printf("[S+%c]", c);
+                Keyboard.press(KEY_LEFT_SHIFT);
+                delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
+                Keyboard.press(c);
+                delay(random(keyPressMinMs, keyPressMaxMs + 1));
+                Keyboard.releaseAll();
+              } else {
+                if (logChar) Serial.print(c);
+                Keyboard.press(c);
+                delay(random(keyPressMinMs, keyPressMaxMs + 1));
+                Keyboard.releaseAll();
+              }
             } else {
-              if (logChar) Serial.printf("[S+%c]", c);
-              Keyboard.press(KEY_LEFT_SHIFT);
-              delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-              Keyboard.press(c);
-              delay(random(keyPressMinMs, keyPressMaxMs + 1));
-              Keyboard.releaseAll();
-            }
-          } else if (isLowerLetter(c) || isShiftedSymbol(c)) {
-            if (capsLockActive) {
-              toggleCapsLock(logChar);
-              delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-            }
-            if (isShiftedSymbol(c)) {
-              if (logChar) Serial.printf("[S+%c]", c);
-              Keyboard.press(KEY_LEFT_SHIFT);
-              delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-              Keyboard.press(c);
-              delay(random(keyPressMinMs, keyPressMaxMs + 1));
-              Keyboard.releaseAll();
-            } else {
+              // Neutral characters (digits, spaces, punctuation not requiring Shift)
               if (logChar) Serial.print(c);
               Keyboard.press(c);
               delay(random(keyPressMinMs, keyPressMaxMs + 1));
               Keyboard.releaseAll();
             }
-          } else {
-            // Neutral characters (digits, spaces, punctuation not requiring Shift)
-            if (logChar) Serial.print(c);
-            Keyboard.press(c);
-            delay(random(keyPressMinMs, keyPressMaxMs + 1));
-            Keyboard.releaseAll();
+            lastCharTime = millis();
+            currentDelay = random(keyDelayMinMs, keyDelayMaxMs + 1);
           }
         }
-        lastCharTime = millis();
-        currentDelay = random(keyDelayMinMs, keyDelayMaxMs + 1);
-      }
-      
-      if (printIndex >= pendingText.length()) {
-        if (capsLockActive) {
-          delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-          toggleCapsLock(true);
+
+        if (printIndex >= pendingText.length() && !capsLockActive && !ruLayoutActive) {
+          isPrinting = false;
+          pendingText = String();
+          Serial.println(DEBUG_LOG_KEYS ? "\nPrinting finished" : "Printing finished");
         }
-        if (ruLayoutActive) {
-          delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-          toggleHostLayout(true);
-        }
-        isPrinting = false;
-        pendingText = String();
-        Serial.println(DEBUG_LOG_KEYS ? "\nPrinting finished" : "Printing finished");
       }
     }
   }
