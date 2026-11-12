@@ -44,14 +44,24 @@ inline String generateApPassword() {
   uint8_t hash[32] = {0};
   mbedtls_sha256((const unsigned char*)&seed, sizeof(seed), hash, 0);
 
-  // 10 characters: lowercase Latin letters and digits excluding ambiguous characters (0, o, 1, l, i)
+  // 14 characters (~69.4 bits): lowercase Latin letters and digits excluding ambiguous characters (0, o, 1, l, i)
+  // Rejection sampling (< 248, since 248 = 31 * 8) eliminates modulo bias.
   const char charset[] = "abcdefghjkmnpqrstuvwxyz23456789";
   const size_t charsetLen = sizeof(charset) - 1;
-  char buf[11];
-  for (int i = 0; i < 10; i++) {
-    buf[i] = charset[hash[i] % charsetLen];
+  const uint8_t maxUnbiased = (uint8_t)((256 / charsetLen) * charsetLen);
+  char buf[15];
+  int outIdx = 0;
+  while (outIdx < 14) {
+    for (size_t i = 0; i < sizeof(hash) && outIdx < 14; i++) {
+      if (hash[i] < maxUnbiased) {
+        buf[outIdx++] = charset[hash[i] % charsetLen];
+      }
+    }
+    if (outIdx < 14) {
+      mbedtls_sha256(hash, sizeof(hash), hash, 0);
+    }
   }
-  buf[10] = '\0';
+  buf[14] = '\0';
   return String(buf);
 }
 

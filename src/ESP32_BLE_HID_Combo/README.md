@@ -114,13 +114,18 @@ In addition to that you can send media keys (which is not possible with the USB 
 - KEY_MEDIA_EMAIL_READER
 
 ### Bluetooth device settings
-In order to change Bluetooth information you need to use the bleDevice object. You can ether the values of the default constructor on BleCombo.h or you can use the setter functions.
+In order to change Bluetooth information you need to use the `bleDevice` object. Call identity setters before `Keyboard.begin()` / `Mouse.begin()`:
   
 ``` C++
-bleDevice.setDeviceName("My ESP32"); //call before any of the begin functions to change the device name.
-bleDevice.setBatteryLevel(80); //change the battery level to 80%
-bleDevice.setDelay(100); //change the delay between each key event
-bleDevice.isConnected(); //returns true if the device is connected to a host
+bleDevice.setName("My ESP32"); // call before begin() to change the advertised BLE name
+bleDevice.setManufacturer("My Vendor"); // call before begin() to change the GATT manufacturer string
+bleDevice.set_vendor_id(0x2B89); // call before begin() to change PnP Vendor ID
+bleDevice.set_product_id(0x6201); // call before begin() to change PnP Product ID
+bleDevice.set_version(0x0210); // call before begin() to change PnP Version
+bleDevice.setTxPower(0); // optional: set BLE TX power in dBm (NimBLE mode, e.g. 0 dBm)
+bleDevice.setBatteryLevel(80); // change the battery level to 80%
+bleDevice.setDelay(100); // change the delay (ms) between each HID report in NimBLE mode
+bleDevice.isConnected(); // returns true if the device is connected to a host
 ```
 
 ## NimBLE-Mode

@@ -22,19 +22,19 @@ Libraries:
    - Reordered header includes in BleCombo.cpp to prevent multiple definition conflicts with the standard BLE stack
    - Added pServer->advertiseOnDisconnect(true) to automatically restart advertising after BLE disconnection in NimBLE 2.x
    - Added advertising->setName(deviceName) to broadcast the device name directly in the NimBLE 2.x advertisement packet
-   - Set constant 0 dBm (1 mW) BLE transmit power via BLEDevice::setPower(0) after BLEDevice::init()
+   - Added public setters setManufacturer(), setTxPower(), set_vendor_id(), set_product_id(), set_version()
    - Removed deprecated hid->startServices() call (for NimBLE) and unused <driver/adc.h> header
    - Fixed a bug in Mouse.cpp where Mouse_::releaseAll() called release() instead of releaseMouse()
    - Added include guards and relative "BleCombo.h" includes in BleKeyboard.h and BleMouse.h
 
 Usage:
-* The board derives a deterministic, unique 10-character Access Point WPA3 password from its internal factory-burned silicon IDs (eFuse Block 2/1 and SPI Flash Unique ID via SHA-256) that remains constant even after an NVS reset.
+* The board derives a deterministic, unique 14-character Access Point WPA3 password from its internal factory-burned silicon IDs (eFuse Block 2/1 and SPI Flash Unique ID via SHA-256) that remains constant even after an NVS reset.
 * If no home Wi-Fi network is configured or the saved network is unreachable, the board starts a WPA3-Only Access Point (limited to 1 client connection) named "vkeyxxxx" (where xxxx are the last 4 hex characters of its MAC address).
 * To get the current IP address and Access Point password: pair the board via Bluetooth ("Ugreen BT") with the target computer, focus any text input field (e.g., Notepad), and short-press the BOOT button on the board:
   - In AP setup mode, it will type:
-    Please connect to wifi access point vkeya1b2 with password xxxxxxxxxx, then navigate to captive portal or manually open http://192.168.4.1
+    Please connect to wifi access point vkeya1b2 with password xxxxxxxxxxxxxx, then navigate to captive portal or manually open http://192.168.4.1
   - When connected to a configured home Wi-Fi network, it will type:
-    Please connect via configured wifi network to http://192.168.1.xxx (login: admin, password: xxxxxxxxxx)
+    Please connect via configured wifi network to http://192.168.1.xxx (login: admin, password: xxxxxxxxxxxxxx)
 * Connect to the "vkeyxxxx" Wi-Fi network from a phone or PC using that password — a Captive Portal will open (or navigate to http://192.168.4.1), where you can use the keyboard/mouse immediately or click "Wi-Fi Settings" (/wifi) to connect to your home Wi-Fi router.
 * Once connected to your home Wi-Fi, the web interface is accessible at http://vkey.local or via the board's IP address (shown in your router's DHCP leases as vkeyxxxx).
 * Onboard BOOT button (GPIO 9):
@@ -46,6 +46,11 @@ Usage:
 * For debugging: connect via USB cable to a PC with Arduino IDE, select the board and COM port, and open Serial Monitor.
 
 */
+
+#include "sdkconfig.h"
+#if !CONFIG_IDF_TARGET_ESP32C3
+#error "vkey supports ESP32-C3 only. Please select 'ESP32C3 Dev Module' in Tools -> Board."
+#endif
 
 #include <WiFi.h>
 #include <WebServer.h>
@@ -74,6 +79,8 @@ Usage:
 #endif
 #define BOOT_LONG_PRESS_MS 3000
 #define WIFI_CONNECT_TIMEOUT_MS 15000
+#define MAX_PRINT_BYTES 32768
+#define MAX_AUTH_FAILURES 5
 #define SERIAL_LOG_MAX_CHARS 256
 #define DEBUG_LOG_KEYS 0
 #define CAPS_LOOKAHEAD_WINDOW 16
@@ -92,6 +99,17 @@ String cachedScanJson = "[]";
 bool scanCacheValid = false;
 bool apMode = false;
 bool lastBleConnected = false;
+
+// BLE single-host bonding & link encryption state
+bool bleBondLocked = false;
+bool bleSessionReady = false;
+bool bleRejectSent = false;
+unsigned long lastBleSecCheckMs = 0;
+
+// Web authentication brute-force lockout state (RAM until reboot)
+int failedAuthCount = 0;
+bool authLockedUntilReboot = false;
+IPAddress lastFailedIp;
 
 // BOOT button state
 bool bootBtnPressed = false;
@@ -162,6 +180,82 @@ bool sleepTimerExpired = false;
 unsigned long sleepTimerStartMs = 0;
 unsigned long sleepTimerDurationMs = 8UL * 3600UL * 1000UL;
 
+void updateBleSecurity() {
+  if (!bleDevice.isConnected()) {
+    if (bleSessionReady || bleRejectSent) {
+      bleSessionReady = false;
+      bleRejectSent = false;
+      bleBondLocked = (NimBLEDevice::getNumBonds() > 0);
+    }
+    return;
+  }
+  if (bleRejectSent) {
+    return;
+  }
+  unsigned long now = millis();
+  if (bleSessionReady) {
+    if (!bleBondLocked && (now - lastBleSecCheckMs >= 500)) {
+      lastBleSecCheckMs = now;
+      if (NimBLEDevice::getNumBonds() > 0) {
+        bleBondLocked = true;
+      }
+    }
+    return;
+  }
+  if (now - lastBleSecCheckMs < 100) {
+    return;
+  }
+  lastBleSecCheckMs = now;
+
+  NimBLEServer* pSrv = NimBLEDevice::getServer();
+  if (!pSrv || pSrv->getConnectedCount() == 0) {
+    return;
+  }
+  NimBLEConnInfo info = pSrv->getPeerInfo((size_t)0);
+  if (bleBondLocked && !NimBLEDevice::isBonded(info.getIdAddress())) {
+    Serial.println("\nBLE rejected unbonded host");
+    bleRejectSent = true;
+    pSrv->disconnect(info.getConnHandle());
+    return;
+  }
+  if (info.isEncrypted()) {
+    bleSessionReady = true;
+    if (NimBLEDevice::getNumBonds() > 0) {
+      bleBondLocked = true;
+    }
+    Serial.println("BLE link encrypted & ready");
+  }
+}
+
+bool isBleReady() {
+  return bleDevice.isConnected() && bleSessionReady;
+}
+
+void clampAllSettings() {
+  keyPressMinMs = constrain(keyPressMinMs, 1, 1000);
+  keyPressMaxMs = constrain(keyPressMaxMs, keyPressMinMs, 1000);
+  keyDelayMinMs = constrain(keyDelayMinMs, 1, 1000);
+  keyDelayMaxMs = constrain(keyDelayMaxMs, keyDelayMinMs, 1000);
+
+  jiggleIntervalMinSec = constrain(jiggleIntervalMinSec, 1, 86400);
+  jiggleIntervalMaxSec = constrain(jiggleIntervalMaxSec, jiggleIntervalMinSec, 86400);
+  jiggleShiftMinPx = constrain(jiggleShiftMinPx, 1, 127);
+  jiggleShiftMaxPx = constrain(jiggleShiftMaxPx, jiggleShiftMinPx, 127);
+  jiggleReturnMinMs = constrain(jiggleReturnMinMs, 1, 5000);
+  jiggleReturnMaxMs = constrain(jiggleReturnMaxMs, jiggleReturnMinMs, 5000);
+
+  scrollIntervalMinSec = constrain(scrollIntervalMinSec, 1, 86400);
+  scrollIntervalMaxSec = constrain(scrollIntervalMaxSec, scrollIntervalMinSec, 86400);
+  scrollBurstMin = constrain(scrollBurstMin, 1, 100);
+  scrollBurstMax = constrain(scrollBurstMax, scrollBurstMin, 100);
+  scrollStepDelayMinMs = constrain(scrollStepDelayMinMs, 10, 1000);
+  scrollStepDelayMaxMs = constrain(scrollStepDelayMaxMs, scrollStepDelayMinMs, 1000);
+  scrollStepMinTicks = constrain(scrollStepMinTicks, 1, 127);
+  scrollStepMaxTicks = constrain(scrollStepMaxTicks, scrollStepMinTicks, 127);
+  scrollReturnMinSec = constrain(scrollReturnMinSec, 1, 3600);
+  scrollReturnMaxSec = constrain(scrollReturnMaxSec, scrollReturnMinSec, 3600);
+}
+
 void toggleCapsLock(bool logToSerial) {
   Keyboard.press(KEY_CAPS_LOCK);
   delay(random(keyPressMinMs, keyPressMaxMs + 1));
@@ -200,7 +294,7 @@ void toggleHostLayout(bool logToSerial, bool blockingWait = false) {
 }
 
 void eraseAllAndReboot() {
-  if (bleDevice.isConnected()) {
+  if (isBleReady()) {
     if (capsLockActive) {
       delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
       toggleCapsLock(true);
@@ -218,8 +312,8 @@ void eraseAllAndReboot() {
   ESP.restart();
 }
 
-void startPrintText(const String& text) {
-  if (!bleDevice.isConnected() || isPrinting || text.length() == 0) {
+void startPrintText(String text) {
+  if (!isBleReady() || isPrinting || text.length() == 0) {
     return;
   }
   // Ensure Jiggler cursor is returned and Scroller is stopped before typing starts
@@ -230,7 +324,7 @@ void startPrintText(const String& text) {
   scrollState = SCROLL_IDLE;
   scrollAccumulatedTicks = 0;
 
-  pendingText = text;
+  pendingText = std::move(text);
   printIndex = 0;
   isPrinting = true;
   capsLockActive = false;
@@ -240,16 +334,16 @@ void startPrintText(const String& text) {
   lastCharTime = millis();
 
 #if DEBUG_LOG_KEYS
-  Serial.printf("Print started (%u chars): ", (unsigned int)text.length());
-  if (text.length() > SERIAL_LOG_MAX_CHARS) {
-    Serial.print(text.substring(0, SERIAL_LOG_MAX_CHARS));
+  Serial.printf("Print started (%u chars): ", (unsigned int)pendingText.length());
+  if (pendingText.length() > SERIAL_LOG_MAX_CHARS) {
+    Serial.print(pendingText.substring(0, SERIAL_LOG_MAX_CHARS));
     Serial.println("... [truncated]");
   } else {
-    Serial.println(text);
+    Serial.println(pendingText);
   }
   Serial.print("Keys: ");
 #else
-  Serial.printf("Print started (%u chars)\n", (unsigned int)text.length());
+  Serial.printf("Print started (%u chars)\n", (unsigned int)pendingText.length());
 #endif
 }
 
@@ -270,15 +364,11 @@ void handleBootButton(bool allowShortPress = true) {
     if (bootBtnPressed) {
       unsigned long heldMs = now - bootBtnPressTime;
       bootBtnPressed = false;
-      if (heldMs >= BOOT_LONG_PRESS_MS) {
-        // Long press released after a blocking operation
-        Serial.println("\nBOOT long press (3s) -> full NVS reset");
-        eraseAllAndReboot();
-      } else if (heldMs >= 50) {
+      if (heldMs >= 50 && heldMs < BOOT_LONG_PRESS_MS) {
         // Short press on BOOT button — type human-readable connection instructions
         if (!allowShortPress) {
           Serial.println("\nBOOT short press -> ignored (Wi-Fi connecting, IP not ready yet)");
-        } else if (!bleDevice.isConnected()) {
+        } else if (!isBleReady()) {
           Serial.println("BOOT short press -> ignored (BLE not connected)");
         } else if (isPrinting) {
           Serial.println("\nBOOT short press -> ignored (already printing)");
@@ -298,7 +388,7 @@ void handleBootButton(bool allowShortPress = true) {
                       " is currently disconnected (reconnecting). Check router or reboot device to start Access Point";
           }
           Serial.println("BOOT short press -> typing connection info");
-          startPrintText(infoStr);
+          startPrintText(std::move(infoStr));
         }
       }
     }
@@ -352,6 +442,7 @@ void performWifiScan() {
   WiFi.scanDelete();
   cachedScanJson = json;
   scanCacheValid = true;
+  bootBtnPressed = false;
   Serial.printf("Wi-Fi scan complete: %d unique networks found (%d total APs)\n", uniqueCount, max(0, n));
 }
 
@@ -402,12 +493,32 @@ String computeRequestHash() {
 }
 
 bool checkAuth() {
+  if (authLockedUntilReboot) {
+    server.send(429, "text/plain", "SECURITY LOCKOUT: Too many failed login attempts. Reboot device.");
+    return false;
+  }
+
   // 1. In STA mode (home/office Wi-Fi), require RFC 2617 HTTP Digest Authentication
   // (In AP mode, the client is already authenticated via WPA3-SAE with max_connection = 1)
   if (!apMode) {
     if (!server.authenticate("admin", apPass.c_str())) {
+      if (server.header("Authorization").length() > 0) {
+        lastFailedIp = server.client().remoteIP();
+        failedAuthCount++;
+        Serial.printf("Auth failed (%d/%d) from %s\n",
+                      failedAuthCount, MAX_AUTH_FAILURES, lastFailedIp.toString().c_str());
+        if (failedAuthCount >= MAX_AUTH_FAILURES) {
+          authLockedUntilReboot = true;
+          Serial.println("SECURITY LOCKOUT: Web UI locked until reboot!");
+          server.send(429, "text/plain", "SECURITY LOCKOUT: Too many failed login attempts. Reboot device.");
+          return false;
+        }
+      }
       server.requestAuthentication(DIGEST_AUTH, "vkey", "Authentication required");
       return false;
+    }
+    if (failedAuthCount > 0 && server.client().remoteIP() == lastFailedIp) {
+      failedAuthCount = 0;
     }
   }
 
@@ -461,9 +572,14 @@ void setup() {
   // Start BLE immediately on boot so keyboard and BOOT button work even before Wi-Fi connects
   Serial.println("Starting BLE KeyBoard");
   bleDevice.setName("Ugreen BT");
+  bleDevice.setManufacturer("UGREEN");
+  bleDevice.set_vendor_id(0x2B89);
+  bleDevice.set_product_id(0x6201);
+  bleDevice.setTxPower(0);
   bleDevice.setBatteryLevel(96);
   Keyboard.begin();
   Mouse.begin();
+  bleBondLocked = (NimBLEDevice::getNumBonds() > 0);
 
   // Initialize settings from NVS (Preferences)
   preferences.begin("jiggler", false);
@@ -491,6 +607,7 @@ void setup() {
   scrollStepMaxTicks = preferences.getInt("sc_stp_max", 2);
   scrollReturnMinSec = preferences.getInt("sc_ret_min", 2);
   scrollReturnMaxSec = preferences.getInt("sc_ret_max", 5);
+  clampAllSettings();
 
   savedSsid = preferences.getString("wifi_ssid", "");
   savedPass = preferences.getString("wifi_pass", "");
@@ -516,6 +633,7 @@ void setup() {
     Serial.print(savedSsid);
     unsigned long startAttempt = millis();
     while (WiFi.status() != WL_CONNECTED && (millis() - startAttempt < WIFI_CONNECT_TIMEOUT_MS)) {
+      updateBleSecurity();
       handleBootButton(false); // Allow 3s long-press NVS reset while waiting, ignore short press until IP/AP is ready
       delay(100);
       Serial.print(".");
@@ -552,7 +670,7 @@ void setup() {
 
   server.on("/type", HTTP_POST, []() {
     if (!checkAuth()) return;
-    if (!bleDevice.isConnected()) {
+    if (!isBleReady()) {
       server.send(400, "text/plain", "BLE not connected");
       return;
     }
@@ -561,17 +679,21 @@ void setup() {
       return;
     }
     String body = server.hasArg("plain") ? server.arg("plain") : server.arg("payload");
-    if (body.length() > 0) {
-      startPrintText(body);
-      server.send(200, "text/plain", "Started");
-    } else {
+    if (body.length() == 0) {
       server.send(400, "text/plain", "No text");
+      return;
     }
+    if (body.length() > MAX_PRINT_BYTES) {
+      server.send(413, "text/plain", "Text too large (max 32 KB)");
+      return;
+    }
+    startPrintText(std::move(body));
+    server.send(200, "text/plain", "Started");
   });
 
   server.on("/cancel", HTTP_POST, []() {
     if (!checkAuth()) return;
-    if (bleDevice.isConnected()) {
+    if (isBleReady()) {
       if (capsLockActive) {
         delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
         toggleCapsLock(true);
@@ -600,7 +722,8 @@ void setup() {
       }
     }
     String json = "{";
-    json += "\"connected\":" + String(bleDevice.isConnected() ? "true" : "false") + ",";
+    json += "\"connected\":" + String(isBleReady() ? "true" : "false") + ",";
+    json += "\"ble_paired\":" + String(bleBondLocked ? "true" : "false") + ",";
     json += "\"printing\":" + String(isPrinting ? "true" : "false") + ",";
     json += "\"progress\":" + String(printIndex) + ",";
     json += "\"total\":" + String(pendingText.length()) + ",";
@@ -648,7 +771,7 @@ void setup() {
     preferences.putString("wifi_ssid", newSsid);
     preferences.putString("wifi_pass", newPass);
 
-    if (bleDevice.isConnected()) {
+    if (isBleReady()) {
       if (capsLockActive) {
         delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
         toggleCapsLock(true);
@@ -697,10 +820,15 @@ void setup() {
 
   server.on("/keyboard", HTTP_POST, []() {
     if (!checkAuth()) return;
-    if (server.hasArg("kb_prs_min")) { keyPressMinMs = max(1, (int)server.arg("kb_prs_min").toInt()); preferences.putInt("kb_prs_min", keyPressMinMs); }
-    if (server.hasArg("kb_prs_max")) { keyPressMaxMs = max(keyPressMinMs, (int)server.arg("kb_prs_max").toInt()); preferences.putInt("kb_prs_max", keyPressMaxMs); }
-    if (server.hasArg("kb_dly_min")) { keyDelayMinMs = max(1, (int)server.arg("kb_dly_min").toInt()); preferences.putInt("kb_dly_min", keyDelayMinMs); }
-    if (server.hasArg("kb_dly_max")) { keyDelayMaxMs = max(keyDelayMinMs, (int)server.arg("kb_dly_max").toInt()); preferences.putInt("kb_dly_max", keyDelayMaxMs); }
+    if (server.hasArg("kb_prs_min")) keyPressMinMs = (int)server.arg("kb_prs_min").toInt();
+    if (server.hasArg("kb_prs_max")) keyPressMaxMs = (int)server.arg("kb_prs_max").toInt();
+    if (server.hasArg("kb_dly_min")) keyDelayMinMs = (int)server.arg("kb_dly_min").toInt();
+    if (server.hasArg("kb_dly_max")) keyDelayMaxMs = (int)server.arg("kb_dly_max").toInt();
+    clampAllSettings();
+    preferences.putInt("kb_prs_min", keyPressMinMs);
+    preferences.putInt("kb_prs_max", keyPressMaxMs);
+    preferences.putInt("kb_dly_min", keyDelayMinMs);
+    preferences.putInt("kb_dly_max", keyDelayMaxMs);
     Serial.printf("Keyboard settings saved: press=%d..%dms, delay=%d..%dms\n", keyPressMinMs, keyPressMaxMs, keyDelayMinMs, keyDelayMaxMs);
     server.send(200, "text/plain", "OK");
   });
@@ -711,12 +839,19 @@ void setup() {
       jiggleEnabled = (server.arg("enabled") == "true" || server.arg("enabled") == "on");
       preferences.putBool("enabled", jiggleEnabled);
     }
-    if (server.hasArg("int_min")) { jiggleIntervalMinSec = max(1, (int)server.arg("int_min").toInt()); preferences.putInt("int_min", jiggleIntervalMinSec); }
-    if (server.hasArg("int_max")) { jiggleIntervalMaxSec = max(jiggleIntervalMinSec, (int)server.arg("int_max").toInt()); preferences.putInt("int_max", jiggleIntervalMaxSec); }
-    if (server.hasArg("shift_min")) { jiggleShiftMinPx = constrain((int)server.arg("shift_min").toInt(), 1, 127); preferences.putInt("shift_min", jiggleShiftMinPx); }
-    if (server.hasArg("shift_max")) { jiggleShiftMaxPx = constrain((int)server.arg("shift_max").toInt(), jiggleShiftMinPx, 127); preferences.putInt("shift_max", jiggleShiftMaxPx); }
-    if (server.hasArg("ret_min")) { jiggleReturnMinMs = max(1, (int)server.arg("ret_min").toInt()); preferences.putInt("ret_min", jiggleReturnMinMs); }
-    if (server.hasArg("ret_max")) { jiggleReturnMaxMs = max(jiggleReturnMinMs, (int)server.arg("ret_max").toInt()); preferences.putInt("ret_max", jiggleReturnMaxMs); }
+    if (server.hasArg("int_min")) jiggleIntervalMinSec = (int)server.arg("int_min").toInt();
+    if (server.hasArg("int_max")) jiggleIntervalMaxSec = (int)server.arg("int_max").toInt();
+    if (server.hasArg("shift_min")) jiggleShiftMinPx = (int)server.arg("shift_min").toInt();
+    if (server.hasArg("shift_max")) jiggleShiftMaxPx = (int)server.arg("shift_max").toInt();
+    if (server.hasArg("ret_min")) jiggleReturnMinMs = (int)server.arg("ret_min").toInt();
+    if (server.hasArg("ret_max")) jiggleReturnMaxMs = (int)server.arg("ret_max").toInt();
+    clampAllSettings();
+    preferences.putInt("int_min", jiggleIntervalMinSec);
+    preferences.putInt("int_max", jiggleIntervalMaxSec);
+    preferences.putInt("shift_min", jiggleShiftMinPx);
+    preferences.putInt("shift_max", jiggleShiftMaxPx);
+    preferences.putInt("ret_min", jiggleReturnMinMs);
+    preferences.putInt("ret_max", jiggleReturnMaxMs);
     
     // Reset jiggler idle timer if not currently shifted
     if (!jiggleShifted) {
@@ -735,16 +870,27 @@ void setup() {
       scrollEnabled = (server.arg("sc_enabled") == "true" || server.arg("sc_enabled") == "on");
       preferences.putBool("sc_enabled", scrollEnabled);
     }
-    if (server.hasArg("sc_int_min")) { scrollIntervalMinSec = max(1, (int)server.arg("sc_int_min").toInt()); preferences.putInt("sc_int_min", scrollIntervalMinSec); }
-    if (server.hasArg("sc_int_max")) { scrollIntervalMaxSec = max(scrollIntervalMinSec, (int)server.arg("sc_int_max").toInt()); preferences.putInt("sc_int_max", scrollIntervalMaxSec); }
-    if (server.hasArg("sc_cnt_min")) { scrollBurstMin = max(1, (int)server.arg("sc_cnt_min").toInt()); preferences.putInt("sc_cnt_min", scrollBurstMin); }
-    if (server.hasArg("sc_cnt_max")) { scrollBurstMax = max(scrollBurstMin, (int)server.arg("sc_cnt_max").toInt()); preferences.putInt("sc_cnt_max", scrollBurstMax); }
-    if (server.hasArg("sc_dly_min")) { scrollStepDelayMinMs = max(10, (int)server.arg("sc_dly_min").toInt()); preferences.putInt("sc_dly_min", scrollStepDelayMinMs); }
-    if (server.hasArg("sc_dly_max")) { scrollStepDelayMaxMs = max(scrollStepDelayMinMs, (int)server.arg("sc_dly_max").toInt()); preferences.putInt("sc_dly_max", scrollStepDelayMaxMs); }
-    if (server.hasArg("sc_stp_min")) { scrollStepMinTicks = constrain((int)server.arg("sc_stp_min").toInt(), 1, 127); preferences.putInt("sc_stp_min", scrollStepMinTicks); }
-    if (server.hasArg("sc_stp_max")) { scrollStepMaxTicks = constrain((int)server.arg("sc_stp_max").toInt(), scrollStepMinTicks, 127); preferences.putInt("sc_stp_max", scrollStepMaxTicks); }
-    if (server.hasArg("sc_ret_min")) { scrollReturnMinSec = max(1, (int)server.arg("sc_ret_min").toInt()); preferences.putInt("sc_ret_min", scrollReturnMinSec); }
-    if (server.hasArg("sc_ret_max")) { scrollReturnMaxSec = max(scrollReturnMinSec, (int)server.arg("sc_ret_max").toInt()); preferences.putInt("sc_ret_max", scrollReturnMaxSec); }
+    if (server.hasArg("sc_int_min")) scrollIntervalMinSec = (int)server.arg("sc_int_min").toInt();
+    if (server.hasArg("sc_int_max")) scrollIntervalMaxSec = (int)server.arg("sc_int_max").toInt();
+    if (server.hasArg("sc_cnt_min")) scrollBurstMin = (int)server.arg("sc_cnt_min").toInt();
+    if (server.hasArg("sc_cnt_max")) scrollBurstMax = (int)server.arg("sc_cnt_max").toInt();
+    if (server.hasArg("sc_dly_min")) scrollStepDelayMinMs = (int)server.arg("sc_dly_min").toInt();
+    if (server.hasArg("sc_dly_max")) scrollStepDelayMaxMs = (int)server.arg("sc_dly_max").toInt();
+    if (server.hasArg("sc_stp_min")) scrollStepMinTicks = (int)server.arg("sc_stp_min").toInt();
+    if (server.hasArg("sc_stp_max")) scrollStepMaxTicks = (int)server.arg("sc_stp_max").toInt();
+    if (server.hasArg("sc_ret_min")) scrollReturnMinSec = (int)server.arg("sc_ret_min").toInt();
+    if (server.hasArg("sc_ret_max")) scrollReturnMaxSec = (int)server.arg("sc_ret_max").toInt();
+    clampAllSettings();
+    preferences.putInt("sc_int_min", scrollIntervalMinSec);
+    preferences.putInt("sc_int_max", scrollIntervalMaxSec);
+    preferences.putInt("sc_cnt_min", scrollBurstMin);
+    preferences.putInt("sc_cnt_max", scrollBurstMax);
+    preferences.putInt("sc_dly_min", scrollStepDelayMinMs);
+    preferences.putInt("sc_dly_max", scrollStepDelayMaxMs);
+    preferences.putInt("sc_stp_min", scrollStepMinTicks);
+    preferences.putInt("sc_stp_max", scrollStepMaxTicks);
+    preferences.putInt("sc_ret_min", scrollReturnMinSec);
+    preferences.putInt("sc_ret_max", scrollReturnMaxSec);
 
     // Immediately stop any active scroll cycle and reset idle timer
     scrollState = SCROLL_IDLE;
@@ -770,8 +916,12 @@ void setup() {
       server.send(200, "text/plain", "OK");
     } else {
       float hours = server.hasArg("hours") ? server.arg("hours").toFloat() : 8.0f;
+      if (isnan(hours) || isinf(hours) || hours <= 0.0f) {
+        server.send(400, "text/plain", "Invalid hours value");
+        return;
+      }
       if (hours < 0.01f) hours = 0.01f;
-      if (hours > 168.0f) hours = 168.0f;
+      if (hours > 24.0f) hours = 24.0f;
       sleepTimerDurationMs = (unsigned long)(hours * 3600.0f * 1000.0f);
       if (sleepTimerDurationMs < 1000UL) sleepTimerDurationMs = 1000UL;
       sleepTimerStartMs = millis();
@@ -782,6 +932,36 @@ void setup() {
       Serial.printf("Sleep timer started for %.2f hours (%lu sec)\n", hours, sleepTimerDurationMs / 1000UL);
       server.send(200, "text/plain", "OK");
     }
+  });
+
+  server.on("/reset_ble", HTTP_POST, []() {
+    if (!checkAuth()) return;
+    if (isPrinting) {
+      isPrinting = false;
+      capsLockActive = false;
+      ruLayoutActive = false;
+      pendingText = String();
+    }
+    NimBLEServer* pSrv = NimBLEDevice::getServer();
+    if (pSrv && pSrv->getConnectedCount() > 0) {
+      std::vector<uint16_t> peers = pSrv->getPeerDevices();
+      for (uint16_t h : peers) {
+        pSrv->disconnect(h);
+      }
+      unsigned long t0 = millis();
+      while (bleDevice.isConnected() && (millis() - t0 < 300)) {
+        delay(10);
+      }
+    }
+    NimBLEDevice::deleteAllBonds();
+    bleBondLocked = false;
+    bleSessionReady = false;
+    bleRejectSent = false;
+    if (pSrv) {
+      pSrv->getAdvertising()->start();
+    }
+    Serial.println("\nBLE bonds cleared via Web UI (/reset_ble)");
+    server.send(200, "text/plain", "BLE pairing cleared. Remove 'Ugreen BT' on your PC and pair again.");
   });
 
   server.on("/reset_nvs", HTTP_POST, []() {
@@ -810,9 +990,10 @@ void loop() {
     dnsServer.processNextRequest();
   }
   server.handleClient();
+  updateBleSecurity();
   handleBootButton();
 
-  bool bleConnected = bleDevice.isConnected();
+  bool bleConnected = isBleReady();
   if (bleConnected != lastBleConnected) {
     lastBleConnected = bleConnected;
     Serial.println(bleConnected ? "\nBLE client connected" : "\nBLE client disconnected");
@@ -932,7 +1113,7 @@ void loop() {
   }
   
   // Abort typing if BLE disconnects mid-stream
-  if (isPrinting && !bleDevice.isConnected()) {
+  if (isPrinting && !bleConnected) {
     isPrinting = false;
     capsLockActive = false;
     ruLayoutActive = false;
@@ -941,7 +1122,7 @@ void loop() {
   }
 
   // Reset jiggler and scroller states/timers when BLE is disconnected
-  if (!bleDevice.isConnected()) {
+  if (!bleConnected) {
     jiggleShifted = false;
     lastJiggleActionTime = millis();
     scrollState = SCROLL_IDLE;
@@ -964,7 +1145,7 @@ void loop() {
   }
 
   // Non-blocking Mouse Jiggler (completely inactive while typing text or when sleep timer has expired, except returning a shifted cursor)
-  if (((jiggleEnabled && !sleepTimerExpired) || jiggleShifted) && bleDevice.isConnected() && !isPrinting) {
+  if (((jiggleEnabled && !sleepTimerExpired) || jiggleShifted) && bleConnected && !isPrinting) {
     unsigned long currentMillis = millis();
     if (currentMillis - lastJiggleActionTime >= nextJiggleDelay) {
       if (!jiggleShifted) {
@@ -992,7 +1173,7 @@ void loop() {
   }
 
   // Independent Non-blocking Mouse Scroller (completely inactive while typing text or when sleep timer has expired)
-  if (scrollEnabled && !sleepTimerExpired && bleDevice.isConnected() && !isPrinting) {
+  if (scrollEnabled && !sleepTimerExpired && bleConnected && !isPrinting) {
     unsigned long currentMillis = millis();
     if (currentMillis - lastScrollActionTime >= nextScrollDelay) {
       switch (scrollState) {

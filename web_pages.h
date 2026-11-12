@@ -35,9 +35,9 @@ const char htmlPage[] PROGMEM = R"=====(
   <div id="status">Status: Ready</div>
 
   <form id="typeForm" action="/type" method="POST">
-    <textarea name="payload" id="payloadText" rows="10" placeholder="Enter text..."></textarea><br><br>
+    <textarea name="payload" id="payloadText" rows="10" maxlength="32768" placeholder="Enter text (up to 32 KB)..."></textarea><br><br>
     <input type="submit" id="printBtn" class="btn" value="Print">
-    <button type="button" id="cancelBtn" class="btn" onclick="apiPost('/cancel').then(()=>updateStatus())">Cancel</button>
+    <button type="button" id="cancelBtn" class="btn" onclick="apiPost('/cancel').then(async r => { if(!r.ok) alert(await r.text() || 'Cancel failed'); updateStatus(); })">Cancel</button>
   </form>
 
   <hr>
@@ -46,15 +46,15 @@ const char htmlPage[] PROGMEM = R"=====(
     <div class="form-row">
       <span class="form-label">Key Press Hold (ms):</span>
       <div class="form-pair">
-        <label>Min <input type="number" name="kb_prs_min" id="set_kb_prs_min" min="1" required></label>
-        <label>Max <input type="number" name="kb_prs_max" id="set_kb_prs_max" min="1" required></label>
+        <label>Min <input type="number" name="kb_prs_min" id="set_kb_prs_min" min="1" max="1000" required></label>
+        <label>Max <input type="number" name="kb_prs_max" id="set_kb_prs_max" min="1" max="1000" required></label>
       </div>
     </div>
     <div class="form-row">
       <span class="form-label">Delay Between Keys (ms):</span>
       <div class="form-pair">
-        <label>Min <input type="number" name="kb_dly_min" id="set_kb_dly_min" min="1" required></label>
-        <label>Max <input type="number" name="kb_dly_max" id="set_kb_dly_max" min="1" required></label>
+        <label>Min <input type="number" name="kb_dly_min" id="set_kb_dly_min" min="1" max="1000" required></label>
+        <label>Max <input type="number" name="kb_dly_max" id="set_kb_dly_max" min="1" max="1000" required></label>
       </div>
     </div>
     <button type="submit" class="btn">Save Keyboard Settings</button>
@@ -67,8 +67,8 @@ const char htmlPage[] PROGMEM = R"=====(
     <div class="form-row">
       <span class="form-label">Interval (sec):</span>
       <div class="form-pair">
-        <label>Min <input type="number" name="int_min" id="set_int_min" min="1" required></label>
-        <label>Max <input type="number" name="int_max" id="set_int_max" min="1" required></label>
+        <label>Min <input type="number" name="int_min" id="set_int_min" min="1" max="86400" required></label>
+        <label>Max <input type="number" name="int_max" id="set_int_max" min="1" max="86400" required></label>
       </div>
     </div>
     <div class="form-row">
@@ -81,8 +81,8 @@ const char htmlPage[] PROGMEM = R"=====(
     <div class="form-row">
       <span class="form-label">Return Delay (ms):</span>
       <div class="form-pair">
-        <label>Min <input type="number" name="ret_min" id="set_ret_min" min="1" required></label>
-        <label>Max <input type="number" name="ret_max" id="set_ret_max" min="1" required></label>
+        <label>Min <input type="number" name="ret_min" id="set_ret_min" min="1" max="5000" required></label>
+        <label>Max <input type="number" name="ret_max" id="set_ret_max" min="1" max="5000" required></label>
       </div>
     </div>
     <button type="submit" class="btn">Save Jiggler Settings</button>
@@ -95,22 +95,22 @@ const char htmlPage[] PROGMEM = R"=====(
     <div class="form-row">
       <span class="form-label">Interval (sec):</span>
       <div class="form-pair">
-        <label>Min <input type="number" name="sc_int_min" id="set_sc_int_min" min="1" required></label>
-        <label>Max <input type="number" name="sc_int_max" id="set_sc_int_max" min="1" required></label>
+        <label>Min <input type="number" name="sc_int_min" id="set_sc_int_min" min="1" max="86400" required></label>
+        <label>Max <input type="number" name="sc_int_max" id="set_sc_int_max" min="1" max="86400" required></label>
       </div>
     </div>
     <div class="form-row">
       <span class="form-label">Burst Steps:</span>
       <div class="form-pair">
-        <label>Min <input type="number" name="sc_cnt_min" id="set_sc_cnt_min" min="1" required></label>
-        <label>Max <input type="number" name="sc_cnt_max" id="set_sc_cnt_max" min="1" required></label>
+        <label>Min <input type="number" name="sc_cnt_min" id="set_sc_cnt_min" min="1" max="100" required></label>
+        <label>Max <input type="number" name="sc_cnt_max" id="set_sc_cnt_max" min="1" max="100" required></label>
       </div>
     </div>
     <div class="form-row">
       <span class="form-label">Step Delay (ms):</span>
       <div class="form-pair">
-        <label>Min <input type="number" name="sc_dly_min" id="set_sc_dly_min" min="10" required></label>
-        <label>Max <input type="number" name="sc_dly_max" id="set_sc_dly_max" min="10" required></label>
+        <label>Min <input type="number" name="sc_dly_min" id="set_sc_dly_min" min="10" max="1000" required></label>
+        <label>Max <input type="number" name="sc_dly_max" id="set_sc_dly_max" min="10" max="1000" required></label>
       </div>
     </div>
     <div class="form-row">
@@ -123,8 +123,8 @@ const char htmlPage[] PROGMEM = R"=====(
     <div class="form-row">
       <span class="form-label">Return Delay (sec):</span>
       <div class="form-pair">
-        <label>Min <input type="number" name="sc_ret_min" id="set_sc_ret_min" min="1" required></label>
-        <label>Max <input type="number" name="sc_ret_max" id="set_sc_ret_max" min="1" required></label>
+        <label>Min <input type="number" name="sc_ret_min" id="set_sc_ret_min" min="1" max="3600" required></label>
+        <label>Max <input type="number" name="sc_ret_max" id="set_sc_ret_max" min="1" max="3600" required></label>
       </div>
     </div>
     <button type="submit" class="btn">Save Scroller Settings</button>
@@ -135,7 +135,7 @@ const char htmlPage[] PROGMEM = R"=====(
   <div class="form-row">
     <span class="form-label">Stop Mouse &amp; Scroller after (hours):</span>
     <div class="form-pair">
-      <input type="number" id="sleep_hours" value="8" min="0.01" max="168" step="any" required style="width:70px;">
+      <input type="number" id="sleep_hours" value="8" min="0.01" max="24" step="any" required style="width:70px;">
     </div>
   </div>
   <div id="sleepStatus" style="font-size:14px; font-weight:bold; color:#666; margin-bottom:10px;">Sleep Timer: Disabled</div>
@@ -143,7 +143,7 @@ const char htmlPage[] PROGMEM = R"=====(
   <button type="button" id="sleepStopBtn" class="btn" onclick="setSleepTimer('stop')" disabled>Disable Timer</button>
 
   <hr>
-  <button type="button" class="btn" style="background-color: #ffcccc;" onclick="if(confirm('Erase all settings (Wi-Fi, Jiggler, BLE bonds) and Reboot?')) apiPost('/reset_nvs');">Reset NVS (Full Reset)</button>
+  <button type="button" class="btn" style="background-color: #ffcccc;" onclick="if(confirm('Erase all settings (Wi-Fi, Jiggler, BLE bonds) and Reboot?')) apiPost('/reset_nvs').then(async r => { alert(await r.text() || 'Reset request sent'); });">Reset NVS (Full Reset)</button>
 
   <script>
     const statusDiv = document.getElementById('status');
@@ -270,19 +270,31 @@ const char htmlPage[] PROGMEM = R"=====(
       data.set('action', action);
       if (action === 'start') {
         const hrs = parseFloat(document.getElementById('sleep_hours').value);
-        if (isNaN(hrs) || hrs <= 0) {
-          alert('Please enter a valid number of hours');
+        if (isNaN(hrs) || hrs <= 0 || hrs > 24) {
+          alert('Please enter hours between 0.01 and 24');
           return;
         }
         data.set('hours', String(hrs));
       }
-      apiPost('/sleep', data).then(() => updateStatus());
+      apiPost('/sleep', data).then(async r => {
+        if (!r.ok) alert(await r.text() || 'Failed to update sleep timer');
+        updateStatus();
+      });
     }
 
     function updateStatus() {
       if (statusInFlight) return;
       statusInFlight = true;
-      fetch('/status').then(r => r.json()).then(data => {
+      fetch('/status').then(async r => {
+        if (r.status === 429) {
+          statusDiv.innerHTML = "<span style='color:#d9534f;'>SECURITY LOCKOUT &mdash; Reboot device!</span>";
+          printBtn.disabled = true;
+          return null;
+        }
+        if (!r.ok) return null;
+        return r.json();
+      }).then(data => {
+        if (!data) return;
         if (data.token) csrfToken = data.token;
         isPrintingNow = !!data.printing;
         if (!data.connected) {
@@ -322,7 +334,13 @@ const char htmlPage[] PROGMEM = R"=====(
     document.getElementById('typeForm').onsubmit = function(e) {
       e.preventDefault();
       const text = document.getElementById('payloadText').value;
-      apiPost('/type', text).then(() => {
+      const byteLen = new TextEncoder().encode(text).length;
+      if (byteLen > 32768) {
+        alert(`Text is too large (${(byteLen / 1024).toFixed(1)} KB). Maximum allowed is 32 KB.`);
+        return;
+      }
+      apiPost('/type', text).then(async r => {
+        if (!r.ok) alert(await r.text() || 'Print failed (' + r.status + ')');
         updateStatus();
       });
     };
@@ -359,8 +377,11 @@ const char htmlPage[] PROGMEM = R"=====(
     document.getElementById('keyboardForm').onsubmit = function(e) {
       e.preventDefault();
       let data = new URLSearchParams(new FormData(e.target));
-      apiPost('/keyboard', data)
-        .then(() => { loadSettings(); alert('Keyboard settings saved!'); });
+      apiPost('/keyboard', data).then(async r => {
+        if (!r.ok) { alert(await r.text() || 'Failed to save keyboard settings'); return; }
+        loadSettings();
+        alert('Keyboard settings saved!');
+      });
     };
 
     document.getElementById('settingsForm').onsubmit = function(e) {
@@ -369,8 +390,11 @@ const char htmlPage[] PROGMEM = R"=====(
       if (!document.getElementById('set_enabled').checked) data.append('enabled', 'false');
       else data.set('enabled', 'true');
 
-      apiPost('/settings', data)
-        .then(() => { loadSettings(); alert('Jiggler settings saved!'); });
+      apiPost('/settings', data).then(async r => {
+        if (!r.ok) { alert(await r.text() || 'Failed to save jiggler settings'); return; }
+        loadSettings();
+        alert('Jiggler settings saved!');
+      });
     };
 
     document.getElementById('scrollerForm').onsubmit = function(e) {
@@ -379,8 +403,11 @@ const char htmlPage[] PROGMEM = R"=====(
       if (!document.getElementById('set_sc_enabled').checked) data.append('sc_enabled', 'false');
       else data.set('sc_enabled', 'true');
 
-      apiPost('/scroller', data)
-        .then(() => { loadSettings(); alert('Scroller settings saved!'); });
+      apiPost('/scroller', data).then(async r => {
+        if (!r.ok) { alert(await r.text() || 'Failed to save scroller settings'); return; }
+        loadSettings();
+        alert('Scroller settings saved!');
+      });
     };
 
     document.addEventListener('visibilitychange', function() {
@@ -483,6 +510,13 @@ const char wifiPage[] PROGMEM = R"=====(
     <div class="info-row"><span class="info-label">ESP32 AP Default IP:</span> <code>http://192.168.4.1</code></div>
   </div>
 
+  <div class="card">
+    <h3>4. Bluetooth Pairing (Ugreen BT)</h3>
+    <p class="card-desc">Once paired with a computer, BLE is locked to that host so other nearby devices cannot connect. Clear pairing here if you reinstall your OS or switch computers.</p>
+    <div class="info-row" style="border-bottom:none;"><span class="info-label">BLE Pairing State:</span> <span id="blePairState">Loading...</span></div>
+    <button type="button" class="btn-sm" style="margin-top:8px;" onclick="resetBlePairing()">Reset BLE Pairing</button>
+  </div>
+
   <a href="/" class="nav-link">&larr; Back to Main Page (Keyboard &amp; Mouse)</a>
 
   <script>
@@ -570,12 +604,29 @@ const char wifiPage[] PROGMEM = R"=====(
     }
 
     function loadNetworkInfo() {
-      fetch('/status').then(r => r.json()).then(data => {
+      fetch('/status').then(async r => {
+        if (r.status === 429) {
+          document.getElementById('curMode').innerHTML = '<span class="badge-err">SECURITY LOCKOUT &mdash; Reboot device!</span>';
+          return null;
+        }
+        if (!r.ok) return null;
+        return r.json();
+      }).then(data => {
+        if (!data) return;
         if (data.token) csrfToken = data.token;
         const curMode = document.getElementById('curMode');
         const curNetwork = document.getElementById('curNetwork');
         const apState = document.getElementById('apState');
         const homeWifiStatus = document.getElementById('homeWifiStatus');
+        const blePairState = document.getElementById('blePairState');
+
+        if (data.connected) {
+          blePairState.innerHTML = '<span class="badge-sta">Paired &amp; Connected (Encrypted)</span>';
+        } else if (data.ble_paired) {
+          blePairState.innerHTML = '<span class="badge-ap">Paired (Locked to Host)</span>';
+        } else {
+          blePairState.innerHTML = 'Open for Pairing';
+        }
 
         if (data.ap_mode) {
           curNetwork.textContent = data.hostname + ' (ESP32 AP)';
@@ -604,6 +655,15 @@ const char wifiPage[] PROGMEM = R"=====(
           document.getElementById('wifi_ssid').value = data.ssid;
         }
       }).catch(() => {});
+    }
+
+    function resetBlePairing() {
+      if (!confirm("Clear saved BLE pairing so a new computer can pair with 'Ugreen BT'?\n(Wi-Fi and Jiggler settings will NOT be erased.)")) return;
+      apiPost('/reset_ble').then(async r => {
+        const msg = await r.text();
+        alert(msg || (r.ok ? 'BLE pairing cleared' : 'Failed to clear BLE pairing'));
+        loadNetworkInfo();
+      });
     }
 
     function scanWifi(refresh) {

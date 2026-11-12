@@ -147,7 +147,10 @@ void BleCombo::begin(void)
 	{
 #if defined(USE_NIMBLE)
 		BLEDevice::init(deviceName);
-		BLEDevice::setPower(0); // Set constant 0 dBm (1 mW) BLE transmit power
+		if (_hasCustomTxPower)
+		{
+			BLEDevice::setPower(_txPower);
+		}
 #else
 		BLEDevice::init(String(deviceName.c_str()));
 #endif
@@ -249,6 +252,25 @@ void BleCombo::setBatteryLevel(uint8_t level)
 void BleCombo::setName(std::string deviceName)
 {
 	this->deviceName = deviceName;
+}
+
+// must be called before begin in order to set the manufacturer
+void BleCombo::setManufacturer(std::string deviceManufacturer)
+{
+	this->deviceManufacturer = deviceManufacturer;
+}
+
+// sets BLE transmit power in dBm (NimBLE mode); can be called before or after begin()
+void BleCombo::setTxPower(int8_t dbm)
+{
+	this->_txPower = dbm;
+	this->_hasCustomTxPower = true;
+#if defined(USE_NIMBLE)
+	if (isInitialized)
+	{
+		BLEDevice::setPower(dbm);
+	}
+#endif
 }
 
 /**

@@ -89,6 +89,8 @@ private:
   uint16_t vid = 0x05ac;
   uint16_t pid = 0x820a;
   uint16_t version = 0x0210;
+  int8_t _txPower = 0;
+  bool _hasCustomTxPower = false;
 
   static bool isInitialized;
 
@@ -96,7 +98,12 @@ public:
   BleCombo(std::string deviceName = "ESP32 Combo HID", std::string deviceManufacturer = "Espressif", uint8_t batteryLevel = 100);
   void setBatteryLevel(uint8_t level);
   void setName(std::string deviceName);
+  void setManufacturer(std::string deviceManufacturer);
+  void setTxPower(int8_t dbm);
   void setDelay(uint32_t ms);
+  void set_vendor_id(uint16_t vid);
+  void set_product_id(uint16_t pid);
+  void set_version(uint16_t version);
   bool isConnected(void);
 
 protected:
@@ -119,9 +126,6 @@ protected:
   void move(signed char x, signed char y, signed char wheel = 0, signed char hWheel = 0);
   bool isPressed(const uint16_t b);
 
-  void set_vendor_id(uint16_t vid);
-  void set_product_id(uint16_t pid);
-  void set_version(uint16_t version);
   virtual void onStarted(BLEServer *pServer){};
 #if defined(USE_NIMBLE)
   virtual void onConnect(BLEServer *pServer, NimBLEConnInfo& connInfo) override;
