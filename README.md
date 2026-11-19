@@ -46,7 +46,7 @@ It is designed for pasting text and scripts into machines where clipboard sharin
   * **Long press (hold for `3 seconds` after power-on):** Full factory reset — safely releases keys / turns off `Caps Lock` if active, erases all NVS data (Wi-Fi credentials, Keyboard/Jiggler/Scroller settings, and BLE bonds), and reboots.
 * **Live Memory Diagnostics & Privacy-Safe Serial Logging:**
   * Displays real-time Free Heap RAM and Maximum Contiguous Allocatable Block in the web UI header.
-  * Logs lifecycle events, BLE connect/disconnect transitions, Wi-Fi scans, settings updates, Jiggler/Scroller actions, and anonymized typing statistics (`Print started (N chars)`, `Printing finished`) to `Serial` (`115200 baud`). By default (`#define DEBUG_LOG_KEYS 0`), typed characters and `apPass` are **never** echoed to the USB Serial port to prevent local processes on the USB host from snooping keystrokes.
+  * Logs lifecycle events, BLE connect/disconnect transitions, Wi-Fi scans, settings updates, Jiggler/Scroller actions, and anonymized typing statistics (`Print started (N bytes)`, `Printing finished (... ms)`) via non-blocking `HWCDC` `Serial` helpers (`115200 baud`, never stalling `loop()` when no Serial Monitor is attached). By default (`#define DEBUG_LOG_KEYS 0`), typed characters and `apPass` are **never** echoed to the USB Serial port to prevent local processes on the USB host from snooping keystrokes; setting `#define DEBUG_LOG_KEYS 1` logs every sent key and layout/Caps Lock transition on its own line (compatible with Serial Monitor timestamps).
 
 ---
 
@@ -84,7 +84,7 @@ It is designed for pasting text and scripts into machines where clipboard sharin
 ### Hardware & Board Settings
 * **Board:** `ESP32-C3 Super Mini` (**ESP32-C3 only** — enforced at compile time via `#if !CONFIG_IDF_TARGET_ESP32C3`)
 * **Arduino IDE:** `2.3.x`
-* **ESP32 Arduino Core:** `esp32 by Espressif Systems` version **`3.3.8`** (Board Manager URL: `https://espressif.github.io/arduino-esp32/package_esp32_index.json`)
+* **ESP32 Arduino Core:** `esp32 by Espressif Systems` version **`3.3.12`** (Board Manager URL: `https://espressif.github.io/arduino-esp32/package_esp32_index.json`)
 
 #### Required Arduino IDE `Tools` Menu Configuration
 Make sure to change the 3 highlighted settings from their defaults before compiling and uploading:
@@ -104,7 +104,7 @@ Make sure to change the 3 highlighted settings from their defaults before compil
 > Hold down the **`BOOT`** button (`GPIO 9`), press and release the **`RST`** button (or plug in the USB cable while holding `BOOT`), then release **`BOOT`** to force the ESP32-C3 into ROM bootloader download mode. After flashing once with `USB CDC On Boot: "Enabled"`, future uploads will reset automatically.
 
 ### Dependencies
-1. **`NimBLE-Arduino`** by `h2zero` (version **`2.5.0`**) — install directly from the Arduino IDE Library Manager.
+1. **`NimBLE-Arduino`** by `h2zero` (version **`2.5.2`**) — install directly from the Arduino IDE Library Manager.
 2. **`ESP32_BLE_HID_Combo`** — **embedded locally** in `src/ESP32_BLE_HID_Combo/`. Do **not** install the outdated version from the Arduino Library Manager.
 
 > **Important Note for Arduino IDE:**  
@@ -124,7 +124,7 @@ The upstream `ESP32-BLE-Combo` library (last updated in 2022) fails to compile a
 2. **ESP32 Arduino Core 3.x Breaking Changes:**
    ESP32 Core 3.x migrated built-in BLE APIs from `std::string` to Arduino `String` and deprecated legacy ESP-IDF headers such as `<driver/adc.h>`.
 3. **`NimBLE-Arduino` 1.x to 2.x Breaking API Changes:**
-   Original `BleCombo` targeted `NimBLE 1.x`. In `NimBLE 2.x` (`2.5.0`), the API was overhauled:
+   Original `BleCombo` targeted `NimBLE 1.x`. In `NimBLE 2.x` (`2.5.2`), the API was overhauled:
    * `NimBLEHIDDevice` methods were renamed to explicit getters/setters (`inputReport()` -> `getInputReport()`, `outputReport()` -> `getOutputReport()`, `manufacturer()->setValue()` -> `setManufacturer()`, `pnp()` -> `setPnp()`, `hidInfo()` -> `setHidInfo()`, `reportMap()` -> `setReportMap()`, `hidService()` -> `getHidService()`).
    * Server and Characteristic callback signatures (`onConnect`, `onDisconnect`, `onWrite`) now require `NimBLEConnInfo& connInfo` (and `int reason` for `onDisconnect`).
    * Automatic advertising restart on disconnect (`m_advertiseOnDisconnect`) was changed from `true` in 1.x to **`false`** by default in 2.x.

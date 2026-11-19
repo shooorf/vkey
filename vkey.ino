@@ -3,14 +3,14 @@
 Environment:
 Board: ESP32-C3 Super Mini
 Arduino IDE: 2.3.8
-Board Manager: esp32 by Espressif, version 3.3.8 (if missing, add https://espressif.github.io/arduino-esp32/package_esp32_index.json in Preferences -> Additional boards manager URLs)
+Board Manager: esp32 by Espressif, version 3.3.12 (if missing, add https://espressif.github.io/arduino-esp32/package_esp32_index.json in Preferences -> Additional boards manager URLs)
 Selected Board: Tools -> Board -> esp32 -> ESP32C3 Dev Module
 Partition Scheme: Huge App
 USB CDC On Boot: Enabled
 Flash Mode: DIO
 
 Libraries:
-1. NimBLE-Arduino by h2zero, version 2.5.0 (install directly from Library Manager)
+1. NimBLE-Arduino by h2zero, version 2.5.2 (install directly from Library Manager)
 2. ESP32_BLE_HID_Combo — currently embedded locally inside the project (src/ESP32_BLE_HID_Combo), no separate installation required!
    When a standalone external library is published in the future, simply:
    - delete the src/ESP32_BLE_HID_Combo directory
@@ -81,7 +81,6 @@ Usage:
 #define WIFI_CONNECT_TIMEOUT_MS 15000
 #define MAX_PRINT_BYTES 32768
 #define MAX_AUTH_FAILURES 5
-#define SERIAL_LOG_MAX_CHARS 256
 #define DEBUG_LOG_KEYS 0
 #define CAPS_LOOKAHEAD_WINDOW 16
 #define CAPS_MIN_UPPER_RUN 5
@@ -124,6 +123,7 @@ bool ruLayoutActive = false;
 int nextCapsCheckIndex = 0;
 unsigned long lastCharTime = 0;
 unsigned long currentDelay = 0;
+unsigned long printStartMs = 0;
 
 // Keyboard typing timing settings (ms)
 int keyPressMinMs = 30; // How long a key is held down
@@ -213,7 +213,7 @@ void updateBleSecurity() {
   }
   NimBLEConnInfo info = pSrv->getPeerInfo((size_t)0);
   if (bleBondLocked && !NimBLEDevice::isBonded(info.getIdAddress())) {
-    Serial.println("\nBLE rejected unbonded host");
+    logPrintln("BLE rejected unbonded host");
     bleRejectSent = true;
     pSrv->disconnect(info.getConnHandle());
     return;
@@ -223,7 +223,7 @@ void updateBleSecurity() {
     if (NimBLEDevice::getNumBonds() > 0) {
       bleBondLocked = true;
     }
-    Serial.println("BLE link encrypted & ready");
+    logPrintln("BLE link encrypted & ready");
   }
 }
 
@@ -256,23 +256,19 @@ void clampAllSettings() {
   scrollReturnMaxSec = constrain(scrollReturnMaxSec, scrollReturnMinSec, 3600);
 }
 
-void toggleCapsLock(bool logToSerial) {
+void toggleCapsLock() {
   Keyboard.press(KEY_CAPS_LOCK);
   delay(random(keyPressMinMs, keyPressMaxMs + 1));
   Keyboard.releaseAll();
   capsLockActive = !capsLockActive;
 #if DEBUG_LOG_KEYS
-  if (logToSerial) {
-    Serial.print(capsLockActive ? "[CAPS:ON]" : "[CAPS:OFF]");
-  }
-#else
-  (void)logToSerial;
+  logPrintln(capsLockActive ? "[CAPS:ON]" : "[CAPS:OFF]");
 #endif
 }
 
-void toggleHostLayout(bool logToSerial, bool blockingWait = false) {
+void toggleHostLayout(bool blockingWait = false) {
   if (capsLockActive) {
-    toggleCapsLock(logToSerial);
+    toggleCapsLock();
     delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
   }
   Keyboard.press(KEY_LEFT_ALT);
@@ -282,30 +278,37 @@ void toggleHostLayout(bool logToSerial, bool blockingWait = false) {
   Keyboard.releaseAll();
   ruLayoutActive = !ruLayoutActive;
 #if DEBUG_LOG_KEYS
-  if (logToSerial) {
-    Serial.print(ruLayoutActive ? "[LAYOUT:RU]" : "[LAYOUT:EN]");
-  }
-#else
-  (void)logToSerial;
+  logPrintln(ruLayoutActive ? "[LAYOUT:RU]" : "[LAYOUT:EN]");
 #endif
   if (blockingWait) {
     delay(150);
   }
 }
 
+void pressShiftedKey(char c) {
+  char baseKey = toUnshiftedKey(c);
+  Keyboard.press(KEY_LEFT_SHIFT);
+  delay(random(keyDelayMinMs, keyDelayMaxMs + 1) * 2UL);
+  Keyboard.press(baseKey);
+  delay(random(keyPressMinMs, keyPressMaxMs + 1));
+  Keyboard.release(baseKey);
+  delay(random(keyPressMinMs, keyPressMaxMs + 1));
+  Keyboard.releaseAll();
+}
+
 void eraseAllAndReboot() {
   if (isBleReady()) {
     if (capsLockActive) {
       delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-      toggleCapsLock(true);
+      toggleCapsLock();
     }
     if (ruLayoutActive) {
       delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-      toggleHostLayout(true, true);
+      toggleHostLayout(true);
     }
     Keyboard.releaseAll();
   }
-  Serial.println("\nErasing NVS and rebooting...");
+  logPrintln("Erasing NVS and rebooting...");
   delay(200);
   nvs_flash_erase();
   nvs_flash_init();
@@ -330,21 +333,11 @@ void startPrintText(String text) {
   capsLockActive = false;
   ruLayoutActive = false;
   nextCapsCheckIndex = 0;
-  currentDelay = random(keyDelayMinMs, keyDelayMaxMs + 1);
+  currentDelay = 500;
   lastCharTime = millis();
+  printStartMs = lastCharTime;
 
-#if DEBUG_LOG_KEYS
-  Serial.printf("Print started (%u chars): ", (unsigned int)pendingText.length());
-  if (pendingText.length() > SERIAL_LOG_MAX_CHARS) {
-    Serial.print(pendingText.substring(0, SERIAL_LOG_MAX_CHARS));
-    Serial.println("... [truncated]");
-  } else {
-    Serial.println(pendingText);
-  }
-  Serial.print("Keys: ");
-#else
-  Serial.printf("Print started (%u chars)\n", (unsigned int)pendingText.length());
-#endif
+  logPrintf("Print started (%u bytes)\n", (unsigned int)pendingText.length());
 }
 
 void handleBootButton(bool allowShortPress = true) {
@@ -357,7 +350,7 @@ void handleBootButton(bool allowShortPress = true) {
       bootBtnPressTime = now;
     } else if (now - bootBtnPressTime >= BOOT_LONG_PRESS_MS) {
       // Long press on BOOT button — full NVS reset and reboot
-      Serial.println("\nBOOT long press (3s) -> full NVS reset");
+      logPrintln("BOOT long press (3s) -> full NVS reset");
       eraseAllAndReboot();
     }
   } else {
@@ -367,11 +360,11 @@ void handleBootButton(bool allowShortPress = true) {
       if (heldMs >= 50 && heldMs < BOOT_LONG_PRESS_MS) {
         // Short press on BOOT button — type human-readable connection instructions
         if (!allowShortPress) {
-          Serial.println("\nBOOT short press -> ignored (Wi-Fi connecting, IP not ready yet)");
+          logPrintln("BOOT short press -> ignored (Wi-Fi connecting, IP not ready yet)");
         } else if (!isBleReady()) {
-          Serial.println("BOOT short press -> ignored (BLE not connected)");
+          logPrintln("BOOT short press -> ignored (BLE not connected)");
         } else if (isPrinting) {
-          Serial.println("\nBOOT short press -> ignored (already printing)");
+          logPrintln("BOOT short press -> ignored (already printing)");
         } else {
           String infoStr;
           if (apMode) {
@@ -387,7 +380,7 @@ void handleBootButton(bool allowShortPress = true) {
             infoStr = "Wi-Fi network " + savedSsid +
                       " is currently disconnected (reconnecting). Check router or reboot device to start Access Point";
           }
-          Serial.println("BOOT short press -> typing connection info");
+          logPrintln("BOOT short press -> typing connection info");
           startPrintText(std::move(infoStr));
         }
       }
@@ -396,7 +389,7 @@ void handleBootButton(bool allowShortPress = true) {
 }
 
 void performWifiScan() {
-  Serial.println("Scanning Wi-Fi networks...");
+  logPrintln("Scanning Wi-Fi networks...");
   int n = WiFi.scanNetworks();
   if (n < 0) {
     delay(200);
@@ -443,7 +436,7 @@ void performWifiScan() {
   cachedScanJson = json;
   scanCacheValid = true;
   bootBtnPressed = false;
-  Serial.printf("Wi-Fi scan complete: %d unique networks found (%d total APs)\n", uniqueCount, max(0, n));
+  logPrintf("Wi-Fi scan complete: %d unique networks found (%d total APs)\n", uniqueCount, max(0, n));
 }
 
 void startAccessPointMode() {
@@ -467,15 +460,12 @@ void startAccessPointMode() {
   dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
   dnsServer.start(53, "*", apIp);
 
-  Serial.println("\n--- Started Wi-Fi Access Point Mode (WPA3-Only, max 1 client) ---");
-  Serial.print("AP SSID: ");
-  Serial.println(myHostname);
+  logPrintln("--- Started Wi-Fi Access Point Mode (WPA3-Only, max 1 client) ---");
+  logPrintf("AP SSID: %s\n", myHostname.c_str());
 #if DEBUG_LOG_KEYS
-  Serial.print("AP Pass: ");
-  Serial.println(apPass);
+  logPrintf("AP Pass: %s\n", apPass.c_str());
 #endif
-  Serial.print("AP IP:   ");
-  Serial.println(apIp);
+  logPrintf("AP IP:   %s\n", apIp.toString().c_str());
 }
 
 String computeRequestHash() {
@@ -505,11 +495,11 @@ bool checkAuth() {
       if (server.header("Authorization").length() > 0) {
         lastFailedIp = server.client().remoteIP();
         failedAuthCount++;
-        Serial.printf("Auth failed (%d/%d) from %s\n",
-                      failedAuthCount, MAX_AUTH_FAILURES, lastFailedIp.toString().c_str());
+        logPrintf("Auth failed (%d/%d) from %s\n",
+                  failedAuthCount, MAX_AUTH_FAILURES, lastFailedIp.toString().c_str());
         if (failedAuthCount >= MAX_AUTH_FAILURES) {
           authLockedUntilReboot = true;
-          Serial.println("SECURITY LOCKOUT: Web UI locked until reboot!");
+          logPrintln("SECURITY LOCKOUT: Web UI locked until reboot!");
           server.send(429, "text/plain", "SECURITY LOCKOUT: Too many failed login attempts. Reboot device.");
           return false;
         }
@@ -558,19 +548,25 @@ void setup() {
   pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
   randomSeed(esp_random());
 
+#if ARDUINO_USB_CDC_ON_BOOT
   Serial.begin(115200);
+  Serial.setTxBufferSize(1024);
+  Serial.setTxTimeoutMs(1); // Non-zero to avoid arduino-esp32 #12634 underflow while capping HWCDC stalls
+#else
+  Serial.setTxBufferSize(1024);
+  Serial.begin(115200);
+#endif
   for (int i = 0; i < 10; i++) {
     handleBootButton(false);
     delay(100);
   }
-  Serial.println("\n--- Run ESP32 BLE Keyboard ---");
+  logPrintln("--- Run ESP32 BLE Keyboard ---");
 
   myHostname = buildDeviceHostname();
-  Serial.print("Device Hostname / AP SSID: ");
-  Serial.println(myHostname);
+  logPrintf("Device Hostname / AP SSID: %s\n", myHostname.c_str());
 
   // Start BLE immediately on boot so keyboard and BOOT button work even before Wi-Fi connects
-  Serial.println("Starting BLE KeyBoard");
+  logPrintln("Starting BLE KeyBoard");
   bleDevice.setName("Ugreen BT");
   bleDevice.setManufacturer("UGREEN");
   bleDevice.set_vendor_id(0x2B89);
@@ -629,33 +625,31 @@ void setup() {
     WiFi.begin(savedSsid.c_str(), savedPass.c_str());
     WiFi.setSleep(false);
 
-    Serial.print("Connecting to Wi-Fi: ");
-    Serial.print(savedSsid);
+    logPrintf("Connecting to Wi-Fi: %s", savedSsid.c_str());
     unsigned long startAttempt = millis();
     while (WiFi.status() != WL_CONNECTED && (millis() - startAttempt < WIFI_CONNECT_TIMEOUT_MS)) {
       updateBleSecurity();
       handleBootButton(false); // Allow 3s long-press NVS reset while waiting, ignore short press until IP/AP is ready
       delay(100);
-      Serial.print(".");
+      logPrint(".");
     }
+    logPrintln("");
 
     if (WiFi.status() == WL_CONNECTED) {
       apMode = false;
-      Serial.println("\nWiFi Connected");
-      Serial.print("IP: ");
-      Serial.println(WiFi.localIP());
+      logPrintf("WiFi Connected (IP: %s)\n", WiFi.localIP().toString().c_str());
     } else {
-      Serial.println("\nWiFi connection timeout! Falling back to AP mode.");
+      logPrintln("WiFi connection timeout! Falling back to AP mode.");
       startAccessPointMode();
     }
   } else {
-    Serial.println("No saved Wi-Fi credentials. Starting AP mode.");
+    logPrintln("No saved Wi-Fi credentials. Starting AP mode.");
     startAccessPointMode();
   }
 
   if (MDNS.begin("vkey")) {
     MDNS.addService("http", "tcp", 80);
-    Serial.println("mDNS responder started: http://vkey.local");
+    logPrintln("mDNS responder started: http://vkey.local");
   }
 
   // --- Configure Web Server routes ---
@@ -696,11 +690,11 @@ void setup() {
     if (isBleReady()) {
       if (capsLockActive) {
         delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-        toggleCapsLock(true);
+        toggleCapsLock();
       }
       if (ruLayoutActive) {
         delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-        toggleHostLayout(true, true);
+        toggleHostLayout(true);
       }
     }
     capsLockActive = false;
@@ -708,7 +702,7 @@ void setup() {
     isPrinting = false;
     pendingText = String();
     server.send(200, "text/plain", "Cancelled");
-    Serial.println("\nPrint cancelled");
+    logPrintln("Print cancelled");
   });
 
   server.on("/status", []() {
@@ -774,16 +768,16 @@ void setup() {
     if (isBleReady()) {
       if (capsLockActive) {
         delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-        toggleCapsLock(true);
+        toggleCapsLock();
       }
       if (ruLayoutActive) {
         delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-        toggleHostLayout(true, true);
+        toggleHostLayout(true);
       }
       Keyboard.releaseAll();
     }
 
-    Serial.printf("Wi-Fi credentials saved for SSID '%s'. Rebooting...\n", newSsid.c_str());
+    logPrintf("Wi-Fi credentials saved for SSID '%s'. Rebooting...\n", newSsid.c_str());
     server.send(200, "text/plain", "Wi-Fi credentials saved! Rebooting...");
     delay(500);
     ESP.restart();
@@ -829,7 +823,7 @@ void setup() {
     preferences.putInt("kb_prs_max", keyPressMaxMs);
     preferences.putInt("kb_dly_min", keyDelayMinMs);
     preferences.putInt("kb_dly_max", keyDelayMaxMs);
-    Serial.printf("Keyboard settings saved: press=%d..%dms, delay=%d..%dms\n", keyPressMinMs, keyPressMaxMs, keyDelayMinMs, keyDelayMaxMs);
+    logPrintf("Keyboard settings saved: press=%d..%dms, delay=%d..%dms\n", keyPressMinMs, keyPressMaxMs, keyDelayMinMs, keyDelayMaxMs);
     server.send(200, "text/plain", "OK");
   });
 
@@ -859,8 +853,8 @@ void setup() {
       lastJiggleActionTime = millis();
     }
     
-    Serial.printf("Jiggler settings saved: enabled=%d, int=%d..%ds, shift=%d..%dpx, ret=%d..%dms\n",
-                  jiggleEnabled, jiggleIntervalMinSec, jiggleIntervalMaxSec, jiggleShiftMinPx, jiggleShiftMaxPx, jiggleReturnMinMs, jiggleReturnMaxMs);
+    logPrintf("Jiggler settings saved: enabled=%d, int=%d..%ds, shift=%d..%dpx, ret=%d..%dms\n",
+              jiggleEnabled, jiggleIntervalMinSec, jiggleIntervalMaxSec, jiggleShiftMinPx, jiggleShiftMaxPx, jiggleReturnMinMs, jiggleReturnMaxMs);
     server.send(200, "text/plain", "OK");
   });
 
@@ -898,9 +892,9 @@ void setup() {
     nextScrollDelay = random(scrollIntervalMinSec, scrollIntervalMaxSec + 1) * 1000UL;
     lastScrollActionTime = millis();
 
-    Serial.printf("Scroller settings saved: enabled=%d, int=%d..%ds, burst=%d..%d, dly=%d..%dms, step=%d..%dticks, ret=%d..%ds\n",
-                  scrollEnabled, scrollIntervalMinSec, scrollIntervalMaxSec, scrollBurstMin, scrollBurstMax,
-                  scrollStepDelayMinMs, scrollStepDelayMaxMs, scrollStepMinTicks, scrollStepMaxTicks, scrollReturnMinSec, scrollReturnMaxSec);
+    logPrintf("Scroller settings saved: enabled=%d, int=%d..%ds, burst=%d..%d, dly=%d..%dms, step=%d..%dticks, ret=%d..%ds\n",
+              scrollEnabled, scrollIntervalMinSec, scrollIntervalMaxSec, scrollBurstMin, scrollBurstMax,
+              scrollStepDelayMinMs, scrollStepDelayMaxMs, scrollStepMinTicks, scrollStepMaxTicks, scrollReturnMinSec, scrollReturnMaxSec);
     server.send(200, "text/plain", "OK");
   });
 
@@ -912,7 +906,7 @@ void setup() {
       sleepTimerExpired = false;
       lastJiggleActionTime = millis();
       lastScrollActionTime = millis();
-      Serial.println("Sleep timer disabled");
+      logPrintln("Sleep timer disabled");
       server.send(200, "text/plain", "OK");
     } else {
       float hours = server.hasArg("hours") ? server.arg("hours").toFloat() : 8.0f;
@@ -929,7 +923,7 @@ void setup() {
       sleepTimerExpired = false;
       lastJiggleActionTime = millis();
       lastScrollActionTime = millis();
-      Serial.printf("Sleep timer started for %.2f hours (%lu sec)\n", hours, sleepTimerDurationMs / 1000UL);
+      logPrintf("Sleep timer started for %.2f hours (%lu sec)\n", hours, sleepTimerDurationMs / 1000UL);
       server.send(200, "text/plain", "OK");
     }
   });
@@ -960,13 +954,13 @@ void setup() {
     if (pSrv) {
       pSrv->getAdvertising()->start();
     }
-    Serial.println("\nBLE bonds cleared via Web UI (/reset_ble)");
+    logPrintln("BLE bonds cleared via Web UI (/reset_ble)");
     server.send(200, "text/plain", "BLE pairing cleared. Remove 'Ugreen BT' on your PC and pair again.");
   });
 
   server.on("/reset_nvs", HTTP_POST, []() {
     if (!checkAuth()) return;
-    Serial.println("\nWeb UI /reset_nvs -> full NVS reset");
+    logPrintln("Web UI /reset_nvs -> full NVS reset");
     server.send(200, "text/plain", "NVS Erased. Rebooting...");
     eraseAllAndReboot();
   });
@@ -982,7 +976,7 @@ void setup() {
   });
 
   server.begin();
-  Serial.println("HTTP running, awaiting commands");
+  logPrintln("HTTP running, awaiting commands");
 }
 
 void loop() {
@@ -996,7 +990,7 @@ void loop() {
   bool bleConnected = isBleReady();
   if (bleConnected != lastBleConnected) {
     lastBleConnected = bleConnected;
-    Serial.println(bleConnected ? "\nBLE client connected" : "\nBLE client disconnected");
+    logPrintln(bleConnected ? "BLE client connected" : "BLE client disconnected");
   }
 
   // Asynchronous (non-blocking) text typing
@@ -1004,17 +998,17 @@ void loop() {
     if (millis() - lastCharTime >= currentDelay) {
       if (printIndex >= pendingText.length()) {
         if (capsLockActive) {
-          toggleCapsLock(true);
+          toggleCapsLock();
           lastCharTime = millis();
           currentDelay = random(keyDelayMinMs, keyDelayMaxMs + 1);
         } else if (ruLayoutActive) {
-          toggleHostLayout(true, false);
+          toggleHostLayout(false);
           lastCharTime = millis();
           currentDelay = 150;
         } else {
           isPrinting = false;
           pendingText = String();
-          Serial.println(DEBUG_LOG_KEYS ? "\nPrinting finished" : "Printing finished");
+          logPrintf("Printing finished (%lu ms)\n", millis() - printStartMs);
         }
       } else {
         int curIdx = printIndex;
@@ -1022,12 +1016,6 @@ void loop() {
         bool isCyrillic = false;
         bool cyrillicUpper = false;
         bool validToken = decodeNextPrintToken(pendingText, printIndex, c, isCyrillic, cyrillicUpper);
-        bool logChar = (DEBUG_LOG_KEYS && curIdx < SERIAL_LOG_MAX_CHARS);
-#if DEBUG_LOG_KEYS
-        if (curIdx == SERIAL_LOG_MAX_CHARS) {
-          Serial.print("... [truncated]");
-        }
-#endif
 
         // Strict whitelist: only printable ASCII (32..126, \n, \t) and Russian Cyrillic letters (А..Я, а..я, Ё, ё)
         if (validToken) {
@@ -1036,64 +1024,68 @@ void loop() {
           if (needLayoutSwitch) {
             // Keep printIndex at curIdx so the character is typed on the next tick after the 150ms layout switch delay
             printIndex = curIdx;
-            toggleHostLayout(logChar, false);
+            toggleHostLayout(false);
             lastCharTime = millis();
             currentDelay = 150;
           } else {
             if (isCyrillic) {
               if (cyrillicUpper) {
-                if (logChar) Serial.printf("[RU:S+%c]", c);
-                Keyboard.press(KEY_LEFT_SHIFT);
-                delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-                Keyboard.press(c);
-                delay(random(keyPressMinMs, keyPressMaxMs + 1));
-                Keyboard.releaseAll();
+#if DEBUG_LOG_KEYS
+                logPrintf("[RU:S+%c]\n", c);
+#endif
+                pressShiftedKey(c);
               } else {
-                if (logChar) Serial.printf("[RU:%c]", c);
+#if DEBUG_LOG_KEYS
+                logPrintf("[RU:%c]\n", c);
+#endif
                 Keyboard.press(c);
                 delay(random(keyPressMinMs, keyPressMaxMs + 1));
                 Keyboard.releaseAll();
               }
             } else if (isUpperLetter(c)) {
               if (!capsLockActive && shouldEnableCapsLock(pendingText, curIdx, nextCapsCheckIndex)) {
-                toggleCapsLock(logChar);
+                toggleCapsLock();
                 delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
               }
               if (capsLockActive) {
                 char lowerKey = c - 'A' + 'a';
-                if (logChar) Serial.print(lowerKey);
+#if DEBUG_LOG_KEYS
+                logPrintln(lowerKey);
+#endif
                 Keyboard.press(lowerKey);
                 delay(random(keyPressMinMs, keyPressMaxMs + 1));
                 Keyboard.releaseAll();
               } else {
-                if (logChar) Serial.printf("[S+%c]", c);
-                Keyboard.press(KEY_LEFT_SHIFT);
-                delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-                Keyboard.press(c);
-                delay(random(keyPressMinMs, keyPressMaxMs + 1));
-                Keyboard.releaseAll();
+#if DEBUG_LOG_KEYS
+                logPrintf("[S+%c]\n", c);
+#endif
+                pressShiftedKey(c);
               }
             } else if (isLowerLetter(c) || isShiftedSymbol(c)) {
               if (capsLockActive) {
-                toggleCapsLock(logChar);
+                toggleCapsLock();
                 delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
               }
               if (isShiftedSymbol(c)) {
-                if (logChar) Serial.printf("[S+%c]", c);
-                Keyboard.press(KEY_LEFT_SHIFT);
-                delay(random(keyDelayMinMs, keyDelayMaxMs + 1));
-                Keyboard.press(c);
-                delay(random(keyPressMinMs, keyPressMaxMs + 1));
-                Keyboard.releaseAll();
+#if DEBUG_LOG_KEYS
+                logPrintf("[S+%c]\n", c);
+#endif
+                pressShiftedKey(c);
               } else {
-                if (logChar) Serial.print(c);
+#if DEBUG_LOG_KEYS
+                logPrintln(c);
+#endif
                 Keyboard.press(c);
                 delay(random(keyPressMinMs, keyPressMaxMs + 1));
                 Keyboard.releaseAll();
               }
             } else {
               // Neutral characters (digits, spaces, punctuation not requiring Shift)
-              if (logChar) Serial.print(c);
+#if DEBUG_LOG_KEYS
+              if (c == '\n') logPrintln("[LF]");
+              else if (c == '\t') logPrintln("[TAB]");
+              else logPrintln(c);
+#endif
               Keyboard.press(c);
               delay(random(keyPressMinMs, keyPressMaxMs + 1));
               Keyboard.releaseAll();
@@ -1106,7 +1098,7 @@ void loop() {
         if (printIndex >= pendingText.length() && !capsLockActive && !ruLayoutActive) {
           isPrinting = false;
           pendingText = String();
-          Serial.println(DEBUG_LOG_KEYS ? "\nPrinting finished" : "Printing finished");
+          logPrintf("Printing finished (%lu ms)\n", millis() - printStartMs);
         }
       }
     }
@@ -1118,7 +1110,7 @@ void loop() {
     capsLockActive = false;
     ruLayoutActive = false;
     pendingText = String();
-    Serial.println("\nBLE disconnected, print aborted");
+    logPrintln("BLE disconnected, print aborted");
   }
 
   // Reset jiggler and scroller states/timers when BLE is disconnected
@@ -1135,7 +1127,7 @@ void loop() {
     sleepTimerExpired = true;
     scrollState = SCROLL_IDLE;
     scrollAccumulatedTicks = 0;
-    Serial.println("\nSleep timer expired: Jiggler and Scroller paused");
+    logPrintln("Sleep timer expired: Jiggler and Scroller paused");
   }
 
   // Keep idle timers fresh while actively typing text so Jiggler/Scroller count their interval from the end of typing
@@ -1163,7 +1155,7 @@ void loop() {
         // Return mouse cursor to original position
         Mouse.move(-currentJiggleX, -currentJiggleY);
         jiggleShifted = false;
-        Serial.printf("Jiggle: (%+d, %+d) px\n", currentJiggleX, currentJiggleY);
+        logPrintf("Jiggle: (%+d, %+d) px\n", currentJiggleX, currentJiggleY);
         
         // Set interval until next random movement
         nextJiggleDelay = random(jiggleIntervalMinSec, jiggleIntervalMaxSec + 1) * 1000UL;
@@ -1184,8 +1176,8 @@ void loop() {
           scrollState = SCROLL_BURST_OUT;
           nextScrollDelay = 0;
           lastScrollActionTime = currentMillis;
-          Serial.printf("Scroll: starting burst (%d steps, dir=%s)\n",
-                        scrollStepsRemaining, scrollDirection > 0 ? "UP" : "DOWN");
+          logPrintf("Scroll: starting burst (%d steps, dir=%s)\n",
+                    scrollStepsRemaining, scrollDirection > 0 ? "UP" : "DOWN");
           break;
         }
 
@@ -1201,8 +1193,8 @@ void loop() {
           } else {
             scrollState = SCROLL_WAIT_RETURN;
             nextScrollDelay = random(scrollReturnMinSec * 1000UL, scrollReturnMaxSec * 1000UL + 1);
-            Serial.printf("Scroll: burst complete (%d ticks), waiting %lu ms before return\n",
-                          scrollAccumulatedTicks, nextScrollDelay);
+            logPrintf("Scroll: burst complete (%d ticks), waiting %lu ms before return\n",
+                      scrollAccumulatedTicks, nextScrollDelay);
           }
           break;
         }
@@ -1228,7 +1220,7 @@ void loop() {
           } else {
             scrollState = SCROLL_IDLE;
             nextScrollDelay = random(scrollIntervalMinSec, scrollIntervalMaxSec + 1) * 1000UL;
-            Serial.println("Scroll: returned to initial position");
+            logPrintln("Scroll: returned to initial position");
           }
           break;
         }

@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <stdarg.h>
 #include <esp_mac.h>
 #include <esp_efuse.h>
 #include <esp_flash.h>
@@ -13,6 +14,40 @@
 #ifndef CAPS_MIN_UPPER_RUN
 #define CAPS_MIN_UPPER_RUN 5
 #endif
+
+// Non-blocking Serial logging helpers for ESP32-C3 HWCDC
+inline void logPrint(const char* s) {
+  if (Serial && s && Serial.availableForWrite() >= (int)strlen(s)) Serial.print(s);
+}
+
+inline void logPrint(char c) {
+  if (Serial && Serial.availableForWrite() >= 1) Serial.print(c);
+}
+
+inline void logPrintln(const char* s = "") {
+  if (Serial && s && Serial.availableForWrite() >= (int)strlen(s) + 2) Serial.println(s);
+}
+
+inline void logPrintln(char c) {
+  if (Serial && Serial.availableForWrite() >= 3) Serial.println(c);
+}
+
+inline void logPrintln(const String& s) {
+  if (Serial && Serial.availableForWrite() >= (int)s.length() + 2) Serial.println(s);
+}
+
+inline void logPrintf(const char* fmt, ...) {
+  if (!Serial || !fmt) return;
+  char buf[256];
+  va_list args;
+  va_start(args, fmt);
+  int n = vsnprintf(buf, sizeof(buf), fmt, args);
+  va_end(args);
+  if (n > 0) {
+    int len = (n < (int)sizeof(buf)) ? n : (int)(sizeof(buf) - 1);
+    if (Serial.availableForWrite() >= len) Serial.print(buf);
+  }
+}
 
 inline String buildDeviceHostname() {
   uint8_t mac[6] = {0};
@@ -191,6 +226,16 @@ inline bool isShiftedSymbol(char c) {
     if (c == shifted[i]) return true;
   }
   return false;
+}
+
+inline char toUnshiftedKey(char c) {
+  if (c >= 'A' && c <= 'Z') return c - 'A' + 'a';
+  const char* shifted   = "~!@#$%^&*()_+{}|:\"<>?";
+  const char* unshifted = "`1234567890-=[]\\;',./";
+  for (int i = 0; shifted[i] != '\0'; i++) {
+    if (c == shifted[i]) return unshifted[i];
+  }
+  return c;
 }
 
 inline bool shouldEnableCapsLock(const String& text, int curIdx, int& nextCapsCheckIndex) {
