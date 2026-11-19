@@ -126,10 +126,12 @@ unsigned long currentDelay = 0;
 unsigned long printStartMs = 0;
 
 // Keyboard typing timing settings (ms)
-int keyPressMinMs = 30; // How long a key is held down
+int keyPressMinMs = 30;      // How long a key is held down
 int keyPressMaxMs = 40;
-int keyDelayMinMs = 60; // Delay between keys (including after pressing Shift)
+int keyDelayMinMs = 60;      // Delay between keys
 int keyDelayMaxMs = 80;
+int keyShiftDelayMinMs = 120; // Delay after pressing Shift before the target key
+int keyShiftDelayMaxMs = 160;
 
 // Mouse Jiggler settings
 bool jiggleEnabled = true;
@@ -236,6 +238,8 @@ void clampAllSettings() {
   keyPressMaxMs = constrain(keyPressMaxMs, keyPressMinMs, 1000);
   keyDelayMinMs = constrain(keyDelayMinMs, 1, 1000);
   keyDelayMaxMs = constrain(keyDelayMaxMs, keyDelayMinMs, 1000);
+  keyShiftDelayMinMs = constrain(keyShiftDelayMinMs, 1, 2000);
+  keyShiftDelayMaxMs = constrain(keyShiftDelayMaxMs, keyShiftDelayMinMs, 2000);
 
   jiggleIntervalMinSec = constrain(jiggleIntervalMinSec, 1, 86400);
   jiggleIntervalMaxSec = constrain(jiggleIntervalMaxSec, jiggleIntervalMinSec, 86400);
@@ -288,7 +292,7 @@ void toggleHostLayout(bool blockingWait = false) {
 void pressShiftedKey(char c) {
   char baseKey = toUnshiftedKey(c);
   Keyboard.press(KEY_LEFT_SHIFT);
-  delay(random(keyDelayMinMs, keyDelayMaxMs + 1) * 2UL);
+  delay(random(keyShiftDelayMinMs, keyShiftDelayMaxMs + 1));
   Keyboard.press(baseKey);
   delay(random(keyPressMinMs, keyPressMaxMs + 1));
   Keyboard.release(baseKey);
@@ -337,8 +341,9 @@ void startPrintText(String text) {
   lastCharTime = millis();
   printStartMs = lastCharTime;
 
-  logPrintf("Print started (%u bytes, press=%d..%dms, delay=%d..%dms)\n",
-            (unsigned int)pendingText.length(), keyPressMinMs, keyPressMaxMs, keyDelayMinMs, keyDelayMaxMs);
+  logPrintf("Print started (%u bytes, press=%d..%dms, delay=%d..%dms, shift=%d..%dms)\n",
+            (unsigned int)pendingText.length(), keyPressMinMs, keyPressMaxMs, keyDelayMinMs, keyDelayMaxMs,
+            keyShiftDelayMinMs, keyShiftDelayMaxMs);
 }
 
 void handleBootButton(bool allowShortPress = true) {
@@ -584,6 +589,8 @@ void setup() {
   keyPressMaxMs = preferences.getInt("kb_prs_max", 40);
   keyDelayMinMs = preferences.getInt("kb_dly_min", 60);
   keyDelayMaxMs = preferences.getInt("kb_dly_max", 80);
+  keyShiftDelayMinMs = preferences.getInt("kb_shf_min", 120);
+  keyShiftDelayMaxMs = preferences.getInt("kb_shf_max", 160);
 
   jiggleEnabled = preferences.getBool("enabled", true);
   jiggleIntervalMinSec = preferences.getInt("int_min", 80);
@@ -612,7 +619,8 @@ void setup() {
   csrfToken = generateCsrfToken();
 
 #if DEBUG_LOG_KEYS
-  logPrintf("Prefs Keyboard: press=%d..%dms, delay=%d..%dms\n", keyPressMinMs, keyPressMaxMs, keyDelayMinMs, keyDelayMaxMs);
+  logPrintf("Prefs Keyboard: press=%d..%dms, delay=%d..%dms, shift=%d..%dms\n",
+            keyPressMinMs, keyPressMaxMs, keyDelayMinMs, keyDelayMaxMs, keyShiftDelayMinMs, keyShiftDelayMaxMs);
   logPrintf("Prefs Jiggler: enabled=%d, int=%d..%ds, shift=%d..%dpx, ret=%d..%dms\n",
             jiggleEnabled, jiggleIntervalMinSec, jiggleIntervalMaxSec, jiggleShiftMinPx, jiggleShiftMaxPx, jiggleReturnMinMs, jiggleReturnMaxMs);
   logPrintf("Prefs Scroller: enabled=%d, int=%d..%ds, burst=%d..%d, dly=%d..%dms, step=%d..%dticks, ret=%d..%ds\n",
@@ -801,6 +809,8 @@ void setup() {
     json += "\"kb_prs_max\":" + String(keyPressMaxMs) + ",";
     json += "\"kb_dly_min\":" + String(keyDelayMinMs) + ",";
     json += "\"kb_dly_max\":" + String(keyDelayMaxMs) + ",";
+    json += "\"kb_shf_min\":" + String(keyShiftDelayMinMs) + ",";
+    json += "\"kb_shf_max\":" + String(keyShiftDelayMaxMs) + ",";
     json += "\"enabled\":" + String(jiggleEnabled ? "true" : "false") + ",";
     json += "\"int_min\":" + String(jiggleIntervalMinSec) + ",";
     json += "\"int_max\":" + String(jiggleIntervalMaxSec) + ",";
@@ -829,12 +839,17 @@ void setup() {
     if (server.hasArg("kb_prs_max")) keyPressMaxMs = (int)server.arg("kb_prs_max").toInt();
     if (server.hasArg("kb_dly_min")) keyDelayMinMs = (int)server.arg("kb_dly_min").toInt();
     if (server.hasArg("kb_dly_max")) keyDelayMaxMs = (int)server.arg("kb_dly_max").toInt();
+    if (server.hasArg("kb_shf_min")) keyShiftDelayMinMs = (int)server.arg("kb_shf_min").toInt();
+    if (server.hasArg("kb_shf_max")) keyShiftDelayMaxMs = (int)server.arg("kb_shf_max").toInt();
     clampAllSettings();
     preferences.putInt("kb_prs_min", keyPressMinMs);
     preferences.putInt("kb_prs_max", keyPressMaxMs);
     preferences.putInt("kb_dly_min", keyDelayMinMs);
     preferences.putInt("kb_dly_max", keyDelayMaxMs);
-    logPrintf("Keyboard settings saved: press=%d..%dms, delay=%d..%dms\n", keyPressMinMs, keyPressMaxMs, keyDelayMinMs, keyDelayMaxMs);
+    preferences.putInt("kb_shf_min", keyShiftDelayMinMs);
+    preferences.putInt("kb_shf_max", keyShiftDelayMaxMs);
+    logPrintf("Keyboard settings saved: press=%d..%dms, delay=%d..%dms, shift=%d..%dms\n",
+              keyPressMinMs, keyPressMaxMs, keyDelayMinMs, keyDelayMaxMs, keyShiftDelayMinMs, keyShiftDelayMaxMs);
     server.send(200, "text/plain", "OK");
   });
 

@@ -57,6 +57,13 @@ const char htmlPage[] PROGMEM = R"=====(
         <label>Max <input type="number" name="kb_dly_max" id="set_kb_dly_max" min="1" max="1000" required></label>
       </div>
     </div>
+    <div class="form-row">
+      <span class="form-label">Shift Delay (ms):</span>
+      <div class="form-pair">
+        <label>Min <input type="number" name="kb_shf_min" id="set_kb_shf_min" min="1" max="2000" required></label>
+        <label>Max <input type="number" name="kb_shf_max" id="set_kb_shf_max" min="1" max="2000" required></label>
+      </div>
+    </div>
     <button type="submit" class="btn">Save Keyboard Settings</button>
   </form>
 
@@ -351,6 +358,8 @@ const char htmlPage[] PROGMEM = R"=====(
         document.getElementById('set_kb_prs_max').value = d.kb_prs_max;
         document.getElementById('set_kb_dly_min').value = d.kb_dly_min;
         document.getElementById('set_kb_dly_max').value = d.kb_dly_max;
+        document.getElementById('set_kb_shf_min').value = d.kb_shf_min;
+        document.getElementById('set_kb_shf_max').value = d.kb_shf_max;
 
         document.getElementById('set_enabled').checked = d.enabled;
         document.getElementById('set_int_min').value = d.int_min;
