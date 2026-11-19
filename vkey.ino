@@ -337,7 +337,8 @@ void startPrintText(String text) {
   lastCharTime = millis();
   printStartMs = lastCharTime;
 
-  logPrintf("Print started (%u bytes)\n", (unsigned int)pendingText.length());
+  logPrintf("Print started (%u bytes, press=%d..%dms, delay=%d..%dms)\n",
+            (unsigned int)pendingText.length(), keyPressMinMs, keyPressMaxMs, keyDelayMinMs, keyDelayMaxMs);
 }
 
 void handleBootButton(bool allowShortPress = true) {
@@ -609,6 +610,16 @@ void setup() {
   savedPass = preferences.getString("wifi_pass", "");
   apPass = generateApPassword();
   csrfToken = generateCsrfToken();
+
+#if DEBUG_LOG_KEYS
+  logPrintf("Prefs Keyboard: press=%d..%dms, delay=%d..%dms\n", keyPressMinMs, keyPressMaxMs, keyDelayMinMs, keyDelayMaxMs);
+  logPrintf("Prefs Jiggler: enabled=%d, int=%d..%ds, shift=%d..%dpx, ret=%d..%dms\n",
+            jiggleEnabled, jiggleIntervalMinSec, jiggleIntervalMaxSec, jiggleShiftMinPx, jiggleShiftMaxPx, jiggleReturnMinMs, jiggleReturnMaxMs);
+  logPrintf("Prefs Scroller: enabled=%d, int=%d..%ds, burst=%d..%d, dly=%d..%dms, step=%d..%dticks, ret=%d..%ds\n",
+            scrollEnabled, scrollIntervalMinSec, scrollIntervalMaxSec, scrollBurstMin, scrollBurstMax,
+            scrollStepDelayMinMs, scrollStepDelayMaxMs, scrollStepMinTicks, scrollStepMaxTicks, scrollReturnMinSec, scrollReturnMaxSec);
+  logPrintf("Prefs Wi-Fi SSID: %s\n", savedSsid.length() ? savedSsid.c_str() : "(none)");
+#endif
 
   nextJiggleDelay = random(jiggleIntervalMinSec, jiggleIntervalMaxSec + 1) * 1000UL;
   lastJiggleActionTime = millis();
