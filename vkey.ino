@@ -572,7 +572,7 @@ void setup() {
   bleDevice.setManufacturer("UGREEN");
   bleDevice.set_vendor_id(0x2B89);
   bleDevice.set_product_id(0x6201);
-  bleDevice.setTxPower(0);
+  bleDevice.setTxPower(6);
   bleDevice.setBatteryLevel(96);
   Keyboard.begin();
   Mouse.begin();
